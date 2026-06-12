@@ -9,6 +9,13 @@ def add_input(
     uso_minimo_por_pedido: float,
     estoque_atual_uso: float,
 ) -> None:
+    """Cadastra uma matéria-prima.
+
+    Observação importante sobre o banco legado:
+    - custo_compra agora representa o CUSTO REFERÊNCIA por unidade de uso.
+      Ex.: R$ por cm², R$ por cm, R$ por unidade.
+    - quantidade_total_uso é mantido só por compatibilidade e recebe 1 na tela nova.
+    """
     with get_connection() as conn:
         conn.execute(
             """
@@ -105,17 +112,17 @@ def list_inputs() -> list[dict]:
 
 
 def _with_calculated_fields(row: dict) -> dict:
-    quantidade_total = float(row["quantidade_total_uso"] or 0)
-    custo_compra = float(row["custo_compra"] or 0)
-    uso_minimo = float(row["uso_minimo_por_pedido"] or 0)
+    # A partir desta versão, custo_compra é o custo referência direto.
+    # Não dividimos pelo estoque nem pela quantidade total.
+    custo_ref = float(row["custo_compra"] or 0)
+    uso_ref = float(row["uso_minimo_por_pedido"] or 0)
     estoque_atual = float(row["estoque_atual_uso"] or 0)
-    custo_por_unidade = custo_compra / quantidade_total if quantidade_total else 0
-    custo_minimo = custo_por_unidade * uso_minimo
-    valor_estoque = custo_por_unidade * estoque_atual
+    custo_uso_ref = custo_ref * uso_ref if uso_ref > 0 else 0
+    valor_estoque = custo_ref * estoque_atual
     return {
         **row,
-        "custo_por_unidade_uso": custo_por_unidade,
-        "custo_minimo_por_pedido": custo_minimo,
+        "custo_por_unidade_uso": custo_ref,
+        "custo_minimo_por_pedido": custo_uso_ref,
         "valor_estoque": valor_estoque,
     }
 
