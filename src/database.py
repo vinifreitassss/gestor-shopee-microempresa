@@ -120,6 +120,19 @@ def init_database() -> None:
                 FOREIGN KEY (variacao_id) REFERENCES variacoes(id)
             );
 
+            CREATE TABLE IF NOT EXISTS regras_custo_variacao (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                variacao_id INTEGER NOT NULL UNIQUE,
+                base_variacao_id INTEGER NOT NULL,
+                multiplicador REAL NOT NULL DEFAULT 1,
+                descricao TEXT DEFAULT '',
+                ativo INTEGER NOT NULL DEFAULT 1,
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL,
+                FOREIGN KEY (variacao_id) REFERENCES variacoes(id) ON DELETE CASCADE,
+                FOREIGN KEY (base_variacao_id) REFERENCES variacoes(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS insumos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL,
