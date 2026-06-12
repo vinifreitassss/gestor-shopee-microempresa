@@ -6,6 +6,7 @@ from src.ui.views.dashboard_view import DashboardView
 from src.ui.views.import_view import ImportView
 from src.ui.views.products_view import ProductsView
 from src.ui.views.costs_view import CostsView
+from src.ui.views.inputs_view import InputsView
 from src.ui.views.expenses_view import ExpensesView
 from src.ui.views.dre_view import DreView
 from src.ui.views.settings_view import SettingsView
@@ -46,6 +47,7 @@ class GestorApp(ctk.CTk):
             "Importações",
             "Produtos",
             "Custos",
+            "Insumos / Estoque",
             "Despesas",
             "DRE Mensal",
             "Configurações",
@@ -69,6 +71,7 @@ class GestorApp(ctk.CTk):
                 "Importações": ImportView,
                 "Produtos": ProductsView,
                 "Custos": CostsView,
+                "Insumos / Estoque": InputsView,
                 "Despesas": ExpensesView,
                 "DRE Mensal": DreView,
                 "Configurações": SettingsView,
