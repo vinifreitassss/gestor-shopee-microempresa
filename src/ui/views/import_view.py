@@ -5,8 +5,13 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from src.importer import ShopeeImportError, ShopeeImporter
-from src.services.import_service import find_importations_same_period, save_importation
-from src.services.products_service import list_importations
+from src.services.import_service import (
+    delete_importation,
+    find_importations_same_period,
+    get_importation,
+    list_importations,
+    save_importation,
+)
 from src.ui.components import SimpleTable
 from src.ui.theme import PAD
 from src.utils import brl
@@ -60,7 +65,15 @@ class ImportView(ctk.CTkFrame):
         )
         self.preview_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
 
-        ctk.CTkLabel(self, text="Importações recentes", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+        history_header = ctk.CTkFrame(self)
+        history_header.pack(fill="x", padx=PAD, pady=(0, 4))
+        ctk.CTkLabel(history_header, text="Importações recentes", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        ctk.CTkButton(
+            history_header,
+            text="Excluir importação selecionada",
+            command=self.delete_selected_importation,
+        ).pack(side="right", padx=8)
+
         self.history_table = SimpleTable(
             self,
             [
@@ -71,6 +84,7 @@ class ImportView(ctk.CTkFrame):
                 ("data_fim", "Fim", 100),
                 ("mes_referencia", "Mês", 90),
                 ("status", "Status", 100),
+                ("criado_em", "Criado em", 150),
             ],
             height=6,
         )
@@ -141,6 +155,41 @@ class ImportView(ctk.CTkFrame):
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Erro", f"Não foi possível importar:\n{exc}")
+
+    def delete_selected_importation(self) -> None:
+        selected = self.history_table.selected_values()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma importação na tabela de histórico.")
+            return
+        import_id = int(selected[0])
+        item = get_importation(import_id)
+        if not item:
+            messagebox.showinfo("Importação não encontrada", "Essa importação já não existe.")
+            self.refresh()
+            return
+
+        ok = messagebox.askyesno(
+            "Excluir importação",
+            "Deseja excluir esta planilha importada?\n\n"
+            f"Arquivo: {item['arquivo_nome']}\n"
+            f"Período: {item['data_inicio']} até {item['data_fim']}\n"
+            f"Mês: {item['mes_referencia']}\n"
+            f"Vendas/apurações vinculadas: {item['vendas_contabilizadas']}\n\n"
+            "Isso remove a apuração dessa planilha do Dashboard, DRE e Resultado Operacional.\n"
+            "Produtos, variações, custos e insumos cadastrados serão mantidos.",
+        )
+        if not ok:
+            return
+
+        deleted = delete_importation(import_id)
+        if not deleted:
+            messagebox.showinfo("Importação não encontrada", "Essa importação já foi removida.")
+            self.refresh()
+            return
+
+        self.status_var.set(f"Importação ID {import_id} excluída.")
+        self.refresh()
+        messagebox.showinfo("Importação excluída", "Planilha importada removida com sucesso.")
 
     def refresh(self) -> None:
         rows = list_importations()
