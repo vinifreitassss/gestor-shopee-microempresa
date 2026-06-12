@@ -32,11 +32,19 @@ class ShopeeImporter:
     COLUMN_RULES = {
         "id_item_shopee": ("id do item", "id item", "id do produto", "item id", "product id"),
         "produto_nome": ("produto", "nome do produto", "product name"),
-        "id_variacao_shopee": ("id da variacao", "id de variacao", "variation id", "id variacao"),
-        "variacao_nome": ("nome da variacao", "variacao", "variation name"),
-        "sku_variacao": ("sku da variacao", "sku variacao", "sku"),
-        "vendas_pedido_pago": ("vendas (pedido pago)", "vendas pedido pago", "pedido pago", "vendas", "sales paid"),
-        "unidades_pedido_pago": ("unidades (pedido pago)", "unidades pedido pago", "unidades", "quantidade", "units paid"),
+        "id_variacao_shopee": ("id da variacao", "id de variacao", "id variacao", "variation id"),
+        # Importante: não usar a regra genérica "variacao" aqui.
+        # Ela faz a coluna "ID da Variação" ser confundida com "Nome da Variação".
+        "variacao_nome": (
+            "nome da variacao",
+            "nome variacao",
+            "variation name",
+            "variation option",
+            "opcao da variacao",
+        ),
+        "sku_variacao": ("sku da variacao", "sku variacao", "variation sku", "sku"),
+        "vendas_pedido_pago": ("vendas (pedido pago)", "vendas pedido pago", "sales paid", "pedido pago", "vendas"),
+        "unidades_pedido_pago": ("unidades (pedido pago)", "unidades pedido pago", "units paid", "quantidade", "unidades"),
     }
 
     def preview(self, file_path: str | Path) -> list[ImportedLine]:
@@ -123,15 +131,36 @@ class ShopeeImporter:
         return None
 
     def _map_columns(self, columns: Any) -> dict[str, str]:
-        normalized_columns = {normalize_text(col): str(col) for col in columns}
+        normalized_columns = [(normalize_text(col), str(col)) for col in columns]
         mapping: dict[str, str] = {}
 
         for target, candidates in self.COLUMN_RULES.items():
-            for normalized, original in normalized_columns.items():
-                if any(candidate in normalized for candidate in candidates):
-                    mapping[target] = original
-                    break
+            exact = self._find_exact_column(normalized_columns, candidates)
+            if exact:
+                mapping[target] = exact
+                continue
+
+            partial = self._find_partial_column(normalized_columns, candidates)
+            if partial:
+                mapping[target] = partial
+
         return mapping
+
+    def _find_exact_column(self, normalized_columns: list[tuple[str, str]], candidates: tuple[str, ...]) -> str | None:
+        normalized_candidates = [normalize_text(candidate) for candidate in candidates]
+        for candidate in normalized_candidates:
+            for normalized, original in normalized_columns:
+                if normalized == candidate:
+                    return original
+        return None
+
+    def _find_partial_column(self, normalized_columns: list[tuple[str, str]], candidates: tuple[str, ...]) -> str | None:
+        normalized_candidates = [normalize_text(candidate) for candidate in candidates]
+        for candidate in normalized_candidates:
+            for normalized, original in normalized_columns:
+                if candidate in normalized:
+                    return original
+        return None
 
     def _validate_minimum_columns(self, mapping: dict[str, str]) -> None:
         required = ["produto_nome", "vendas_pedido_pago", "unidades_pedido_pago"]
