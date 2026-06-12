@@ -4,8 +4,10 @@ import customtkinter as ctk
 
 from src.services.inputs_service import list_inputs
 from src.services.products_service import (
+    apply_multiplier_rule,
     list_variations,
     remove_current_variation_cost,
+    remove_multiplier_rule,
     save_variation_cost,
 )
 from src.services.recipe_service import (
@@ -22,6 +24,7 @@ from src.utils import brl, money_to_float
 
 
 EMPTY_VARIATION = "Selecione uma variação"
+EMPTY_BASE_VARIATION = "Selecione a variação modelo"
 EMPTY_MATERIAL = "Selecione uma matéria-prima"
 EMPTY_RECIPE_ITEM = "Selecione um item da ficha"
 
@@ -33,16 +36,20 @@ class CostsView(ctk.CTkFrame):
         self.materials: list[dict] = []
         self.recipe_items: list[dict] = []
         self.variation_by_label: dict[str, dict] = {}
+        self.base_variation_by_label: dict[str, dict] = {}
         self.material_by_label: dict[str, dict] = {}
         self.recipe_item_by_label: dict[str, dict] = {}
         self.selected_variation_id: int | None = None
         self.selected_material_id: int | None = None
 
         self.variation_var = ctk.StringVar(value=EMPTY_VARIATION)
+        self.base_variation_var = ctk.StringVar(value=EMPTY_BASE_VARIATION)
         self.material_var = ctk.StringVar(value=EMPTY_MATERIAL)
         self.recipe_item_var = ctk.StringVar(value=EMPTY_RECIPE_ITEM)
         self.quantity_var = ctk.StringVar(value="")
         self.manual_cost_var = ctk.StringVar(value="")
+        self.multiplier_var = ctk.StringVar(value="1")
+        self.rule_description_var = ctk.StringVar(value="")
         self.variation_status_var = ctk.StringVar(value="Nenhuma variação selecionada.")
         self.material_status_var = ctk.StringVar(value="Escolha uma matéria-prima e informe quanto o produto usa.")
         self.item_preview_var = ctk.StringVar(value="Custo do item: R$ 0,00")
@@ -55,7 +62,7 @@ class CostsView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Custos das Variações", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
         ctk.CTkLabel(
             self,
-            text="Fluxo: selecione a variação, escolha a matéria-prima, informe quanto ela usa e aplique o custo calculado.",
+            text="Você pode calcular por ficha técnica ou usar uma variação modelo com multiplicador. Ex.: 30 medalhas = custo da de 10 x 3.",
             text_color="gray",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
@@ -81,6 +88,22 @@ class CostsView(ctk.CTkFrame):
         ctk.CTkButton(actions_box, text="Salvar custo manual", command=self.save_manual_cost).pack(side="left", padx=8, pady=8)
         ctk.CTkButton(actions_box, text="Remover custo atual", command=self.remove_active_cost).pack(side="left", padx=8, pady=8)
 
+        rule_box = ctk.CTkFrame(self)
+        rule_box.pack(fill="x", padx=PAD, pady=(0, PAD))
+        ctk.CTkLabel(rule_box, text="Regra rápida / produtos semelhantes:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        self.base_variation_menu = ctk.CTkOptionMenu(
+            rule_box,
+            variable=self.base_variation_var,
+            values=[EMPTY_BASE_VARIATION],
+            width=420,
+        )
+        self.base_variation_menu.grid(row=0, column=1, padx=8, pady=8, sticky="w")
+        ctk.CTkLabel(rule_box, text="Multiplicador:").grid(row=0, column=2, padx=8, pady=8, sticky="w")
+        ctk.CTkEntry(rule_box, textvariable=self.multiplier_var, width=80, placeholder_text="1,2").grid(row=0, column=3, padx=8, pady=8, sticky="w")
+        ctk.CTkEntry(rule_box, textvariable=self.rule_description_var, width=260, placeholder_text="Ex.: 30 medalhas = 3x / semelhante = 1x").grid(row=0, column=4, padx=8, pady=8, sticky="w")
+        ctk.CTkButton(rule_box, text="Aplicar regra", command=self.apply_multiplier_cost_rule).grid(row=0, column=5, padx=8, pady=8)
+        ctk.CTkButton(rule_box, text="Remover regra", command=self.remove_selected_multiplier_rule).grid(row=0, column=6, padx=8, pady=8)
+
         main = ctk.CTkFrame(self)
         main.pack(fill="both", expand=True, padx=PAD, pady=(0, PAD))
         main.grid_columnconfigure(0, weight=1)
@@ -91,7 +114,7 @@ class CostsView(ctk.CTkFrame):
         self.material_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
         self.material_box.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self.material_box, text="Adicionar matéria-prima ao custo", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
+        ctk.CTkLabel(self.material_box, text="Ficha técnica manual", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
         ctk.CTkLabel(self.material_box, text="Matéria-prima:").grid(row=1, column=0, sticky="w", padx=8, pady=(8, 2))
         self.material_menu = ctk.CTkOptionMenu(
             self.material_box,
@@ -114,8 +137,8 @@ class CostsView(ctk.CTkFrame):
 
         examples = (
             "Exemplos:\n"
-            "• Medalha adesiva 5 cm: 25 cm² de acrílico + 20 cm² de adesivo + 1 fita\n"
-            "• Troféu: usa o mesmo adesivo, mas com outra área, por exemplo 80 cm²"
+            "• Base 10 medalhas: monte a ficha uma vez. 30 medalhas pode ser regra x3.\n"
+            "• Produtos semelhantes: escolha a base e use x1, x1,2 etc."
         )
         ctk.CTkLabel(self.material_box, text=examples, text_color="gray", justify="left").grid(row=6, column=0, sticky="w", padx=8, pady=(8, 8))
 
@@ -159,17 +182,21 @@ class CostsView(ctk.CTkFrame):
     def refresh(self) -> None:
         old_variation_id = self.selected_variation_id
         old_material_id = self.selected_material_id
+        old_base_label = self.base_variation_var.get()
 
         self.variations = list_variations()
         self.materials = list_inputs()
 
         self.variation_by_label = {}
+        self.base_variation_by_label = {}
         variation_labels = []
         for row in self.variations:
             label = self._variation_label(row)
             self.variation_by_label[label] = row
+            self.base_variation_by_label[label] = row
             variation_labels.append(label)
         self.variation_menu.configure(values=variation_labels or [EMPTY_VARIATION])
+        self.base_variation_menu.configure(values=variation_labels or [EMPTY_BASE_VARIATION])
 
         selected_label = self._label_for_id(self.variation_by_label, old_variation_id)
         if selected_label:
@@ -180,6 +207,11 @@ class CostsView(ctk.CTkFrame):
             self.variation_var.set(EMPTY_VARIATION)
             self.selected_variation_id = None
             self.variation_status_var.set("Nenhuma variação selecionada.")
+
+        if old_base_label in self.base_variation_by_label:
+            self.base_variation_var.set(old_base_label)
+        else:
+            self.base_variation_var.set(EMPTY_BASE_VARIATION)
 
         self.material_by_label = {}
         material_labels = []
@@ -216,9 +248,51 @@ class CostsView(ctk.CTkFrame):
     def update_variation_status(self, row: dict) -> None:
         cost = brl(row["custo_unitario"]) if row.get("custo_unitario") is not None else "Pendente"
         origem = row.get("origem_custo") or "sem origem"
+        rule = ""
+        if row.get("base_variacao_id"):
+            rule = (
+                f" | Regra: base {row.get('base_produto_pai') or ''} / "
+                f"{row.get('base_nome_variacao') or ''} x {self._num(row.get('regra_multiplicador') or 1)}"
+            )
         self.variation_status_var.set(
-            f"Selecionada: {row['produto_pai']} / {row['nome_variacao']} | Custo atual: {cost} | Origem: {origem}"
+            f"Selecionada: {row['produto_pai']} / {row['nome_variacao']} | Custo atual: {cost} | Origem: {origem}{rule}"
         )
+
+    def apply_multiplier_cost_rule(self) -> None:
+        if self.selected_variation_id is None:
+            messagebox.showwarning("Atenção", "Selecione a variação que receberá o custo.")
+            return
+        base = self.base_variation_by_label.get(self.base_variation_var.get())
+        if not base:
+            messagebox.showwarning("Atenção", "Selecione a variação modelo.")
+            return
+        multiplier = money_to_float(self.multiplier_var.get())
+        if multiplier <= 0:
+            messagebox.showwarning("Atenção", "Informe um multiplicador maior que zero. Ex.: 1, 1,2 ou 3.")
+            return
+        try:
+            cost = apply_multiplier_rule(
+                variacao_id=self.selected_variation_id,
+                base_variacao_id=int(base["id"]),
+                multiplicador=multiplier,
+                descricao=self.rule_description_var.get().strip(),
+            )
+        except ValueError as exc:
+            messagebox.showerror("Erro na regra", str(exc))
+            return
+        self.refresh()
+        messagebox.showinfo("Regra aplicada", f"Custo aplicado pela regra: {brl(cost)}")
+
+    def remove_selected_multiplier_rule(self) -> None:
+        if self.selected_variation_id is None:
+            messagebox.showwarning("Atenção", "Selecione uma variação primeiro.")
+            return
+        removed = remove_multiplier_rule(self.selected_variation_id)
+        if not removed:
+            messagebox.showinfo("Sem regra", "Essa variação não possui regra multiplicadora ativa.")
+            return
+        self.refresh()
+        messagebox.showinfo("Regra removida", "A regra multiplicadora foi removida. O custo atual não foi apagado.")
 
     def on_material_selected(self, label: str) -> None:
         row = self.material_by_label.get(label)
@@ -235,7 +309,7 @@ class CostsView(ctk.CTkFrame):
     def update_material_status(self, row: dict) -> None:
         unidade = row["unidade_uso"]
         self.material_status_var.set(
-            f"{row['nome']} | custo base: {brl(row['custo_por_unidade_uso'])} por {unidade}. "
+            f"{row['nome']} | custo ref.: {brl(row['custo_por_unidade_uso'])} por {unidade}. "
             f"Informe a quantidade usada nesta variação nessa mesma unidade."
         )
 
