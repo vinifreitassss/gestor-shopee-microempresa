@@ -48,6 +48,34 @@ def save_variation_cost(variacao_id: int, custo_unitario: float, origem_custo: s
         _recalculate_incomplete_sales(conn, variacao_id, custo_unitario)
 
 
+def remove_current_variation_cost(variacao_id: int) -> bool:
+    """Remove o custo ativo da variação e reabre vendas não fechadas.
+
+    A ideia é evitar DRE errado quando um custo foi aplicado por engano.
+    Fechamentos mensais já fechados não são alterados.
+    """
+    with get_connection() as conn:
+        current = conn.execute(
+            """
+            SELECT id
+            FROM custos_variacao
+            WHERE variacao_id = ? AND ativo = 1
+            ORDER BY criado_em DESC, id DESC
+            LIMIT 1
+            """,
+            (variacao_id,),
+        ).fetchone()
+        if not current:
+            return False
+
+        conn.execute(
+            "UPDATE custos_variacao SET ativo = 0 WHERE id = ?",
+            (current["id"],),
+        )
+        _mark_open_sales_as_incomplete(conn, variacao_id)
+        return True
+
+
 def set_variation_product_type(variacao_id: int, tipo_produto: str) -> None:
     with get_connection() as conn:
         conn.execute(
@@ -86,6 +114,25 @@ def _recalculate_incomplete_sales(conn, variacao_id: int, custo_unitario: float)
             """,
             (custo_unitario, custo_total, lucro, row["id"]),
         )
+
+
+def _mark_open_sales_as_incomplete(conn, variacao_id: int) -> None:
+    conn.execute(
+        """
+        UPDATE vendas_contabilizadas
+        SET custo_unitario_usado = NULL,
+            custo_total = NULL,
+            lucro = NULL,
+            lucro_incompleto = 1
+        WHERE variacao_id = ?
+          AND mes_referencia NOT IN (
+              SELECT mes_referencia
+              FROM fechamentos_mensais
+              WHERE status = 'fechado'
+          )
+        """,
+        (variacao_id,),
+    )
 
 
 def list_importations() -> list[dict]:
