@@ -113,6 +113,18 @@ def init_database() -> None:
                 FOREIGN KEY (variacao_id) REFERENCES variacoes(id)
             );
 
+            CREATE TABLE IF NOT EXISTS insumos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                unidade_uso TEXT NOT NULL,
+                quantidade_total_uso REAL NOT NULL,
+                custo_compra REAL NOT NULL,
+                uso_minimo_por_pedido REAL NOT NULL,
+                estoque_atual_uso REAL NOT NULL DEFAULT 0,
+                ativo INTEGER NOT NULL DEFAULT 1,
+                criado_em TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS vendas_contabilizadas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 importacao_id INTEGER NOT NULL,
