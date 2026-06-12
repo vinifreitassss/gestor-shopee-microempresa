@@ -64,22 +64,29 @@ def get_dre(mes_referencia: str) -> dict:
 
 
 def get_product_ranking(mes_referencia: str) -> list[dict]:
-    return fetch_all(
+    rows = fetch_all(
         """
         SELECT
             pp.nome AS produto_pai,
             COALESCE(SUM(v.faturamento), 0) AS faturamento,
             COALESCE(SUM(v.unidades), 0) AS unidades,
-            COALESCE(SUM(COALESCE(v.lucro, 0)), 0) AS lucro
+            COALESCE(SUM(COALESCE(v.custo_total, 0)), 0) AS custo_total,
+            COALESCE(SUM(COALESCE(v.lucro, 0)), 0) AS lucro,
+            COALESCE(SUM(v.lucro_incompleto), 0) AS pendencias
         FROM vendas_contabilizadas v
         JOIN produtos_pai pp ON pp.id = v.produto_pai_id
         WHERE v.mes_referencia = ?
         GROUP BY pp.id, pp.nome
         ORDER BY faturamento DESC
-        LIMIT 20
+        LIMIT 50
         """,
         (mes_referencia,),
     )
+    for row in rows:
+        faturamento = float(row.get("faturamento") or 0)
+        lucro = float(row.get("lucro") or 0)
+        row["margem"] = (lucro / faturamento * 100) if faturamento else 0
+    return rows
 
 
 def get_pending_costs(mes_referencia: str) -> list[dict]:
