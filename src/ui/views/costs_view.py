@@ -51,9 +51,10 @@ class CostsView(ctk.CTkFrame):
         self.multiplier_var = ctk.StringVar(value="1")
         self.rule_description_var = ctk.StringVar(value="")
         self.variation_status_var = ctk.StringVar(value="Nenhuma variação selecionada.")
+        self.rule_result_var = ctk.StringVar(value="Regra rápida: selecione uma base e informe o multiplicador.")
         self.material_status_var = ctk.StringVar(value="Escolha uma matéria-prima e informe quanto o produto usa.")
         self.item_preview_var = ctk.StringVar(value="Custo do item: R$ 0,00")
-        self.recipe_total_var = ctk.StringVar(value="Custo total da ficha: R$ 0,00")
+        self.recipe_total_var = ctk.StringVar(value="Custo atual da variação: R$ 0,00")
 
         self._build()
         self.quantity_var.trace_add("write", lambda *_: self.update_item_preview())
@@ -68,6 +69,7 @@ class CostsView(ctk.CTkFrame):
 
         selector_box = ctk.CTkFrame(self)
         selector_box.pack(fill="x", padx=PAD, pady=(0, PAD))
+        selector_box.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(selector_box, text="Variação:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=8, pady=8, sticky="w")
         self.variation_menu = ctk.CTkOptionMenu(
@@ -78,8 +80,14 @@ class CostsView(ctk.CTkFrame):
             command=self.on_variation_selected,
         )
         self.variation_menu.grid(row=0, column=1, padx=8, pady=8, sticky="w")
-        ctk.CTkButton(selector_box, text="Atualizar listas", command=self.refresh).grid(row=0, column=2, padx=8, pady=8)
-        ctk.CTkLabel(selector_box, textvariable=self.variation_status_var, text_color="gray").grid(row=1, column=1, columnspan=2, padx=8, pady=(0, 8), sticky="w")
+        ctk.CTkButton(selector_box, text="Atualizar listas", command=self.refresh).grid(row=0, column=2, padx=8, pady=8, sticky="e")
+        ctk.CTkLabel(
+            selector_box,
+            textvariable=self.variation_status_var,
+            text_color="gray",
+            wraplength=900,
+            justify="left",
+        ).grid(row=1, column=1, columnspan=2, padx=8, pady=(0, 8), sticky="w")
 
         actions_box = ctk.CTkFrame(self)
         actions_box.pack(fill="x", padx=PAD, pady=(0, PAD))
@@ -90,19 +98,25 @@ class CostsView(ctk.CTkFrame):
 
         rule_box = ctk.CTkFrame(self)
         rule_box.pack(fill="x", padx=PAD, pady=(0, PAD))
-        ctk.CTkLabel(rule_box, text="Regra rápida / produtos semelhantes:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        rule_box.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(rule_box, text="Regra rápida / produtos semelhantes", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=4, padx=8, pady=(8, 2), sticky="w")
+
+        ctk.CTkLabel(rule_box, text="Base:").grid(row=1, column=0, padx=8, pady=6, sticky="w")
         self.base_variation_menu = ctk.CTkOptionMenu(
             rule_box,
             variable=self.base_variation_var,
             values=[EMPTY_BASE_VARIATION],
-            width=420,
+            width=520,
         )
-        self.base_variation_menu.grid(row=0, column=1, padx=8, pady=8, sticky="w")
-        ctk.CTkLabel(rule_box, text="Multiplicador:").grid(row=0, column=2, padx=8, pady=8, sticky="w")
-        ctk.CTkEntry(rule_box, textvariable=self.multiplier_var, width=80, placeholder_text="1,2").grid(row=0, column=3, padx=8, pady=8, sticky="w")
-        ctk.CTkEntry(rule_box, textvariable=self.rule_description_var, width=260, placeholder_text="Ex.: 30 medalhas = 3x / semelhante = 1x").grid(row=0, column=4, padx=8, pady=8, sticky="w")
-        ctk.CTkButton(rule_box, text="Aplicar regra", command=self.apply_multiplier_cost_rule).grid(row=0, column=5, padx=8, pady=8)
-        ctk.CTkButton(rule_box, text="Remover regra", command=self.remove_selected_multiplier_rule).grid(row=0, column=6, padx=8, pady=8)
+        self.base_variation_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(rule_box, text="Multiplicador:").grid(row=1, column=2, padx=8, pady=6, sticky="w")
+        ctk.CTkEntry(rule_box, textvariable=self.multiplier_var, width=90, placeholder_text="1,2").grid(row=1, column=3, padx=8, pady=6, sticky="w")
+
+        ctk.CTkLabel(rule_box, text="Obs.:").grid(row=2, column=0, padx=8, pady=6, sticky="w")
+        ctk.CTkEntry(rule_box, textvariable=self.rule_description_var, width=520, placeholder_text="Ex.: 30 medalhas = 3x / semelhante = 1x").grid(row=2, column=1, padx=8, pady=6, sticky="w")
+        ctk.CTkButton(rule_box, text="Aplicar regra", command=self.apply_multiplier_cost_rule).grid(row=2, column=2, padx=8, pady=6, sticky="w")
+        ctk.CTkButton(rule_box, text="Remover regra", command=self.remove_selected_multiplier_rule).grid(row=2, column=3, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(rule_box, textvariable=self.rule_result_var, text_color="gray", wraplength=900, justify="left").grid(row=3, column=1, columnspan=3, padx=8, pady=(0, 8), sticky="w")
 
         main = ctk.CTkFrame(self)
         main.pack(fill="both", expand=True, padx=PAD, pady=(0, PAD))
@@ -147,8 +161,8 @@ class CostsView(ctk.CTkFrame):
         self.recipe_box.grid_columnconfigure(0, weight=1)
         self.recipe_box.grid_rowconfigure(3, weight=1)
 
-        ctk.CTkLabel(self.recipe_box, text="Ficha técnica da variação", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-        ctk.CTkLabel(self.recipe_box, textvariable=self.recipe_total_var, font=ctk.CTkFont(size=15, weight="bold")).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
+        ctk.CTkLabel(self.recipe_box, text="Resumo do custo da variação", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+        ctk.CTkLabel(self.recipe_box, textvariable=self.recipe_total_var, font=ctk.CTkFont(size=15, weight="bold"), wraplength=520, justify="left").grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
 
         recipe_actions = ctk.CTkFrame(self.recipe_box)
         recipe_actions.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -182,7 +196,7 @@ class CostsView(ctk.CTkFrame):
     def refresh(self) -> None:
         old_variation_id = self.selected_variation_id
         old_material_id = self.selected_material_id
-        old_base_label = self.base_variation_var.get()
+        old_base_id = self._id_from_label(self.base_variation_by_label, self.base_variation_var.get())
 
         self.variations = list_variations()
         self.materials = list_inputs()
@@ -202,15 +216,13 @@ class CostsView(ctk.CTkFrame):
         if selected_label:
             self.variation_var.set(selected_label)
             self.selected_variation_id = old_variation_id
-            self.update_variation_status(self.variation_by_label[selected_label])
+            current_row = self.variation_by_label[selected_label]
+            self.update_variation_status(current_row)
+            self.load_rule_fields(current_row, fallback_base_id=old_base_id)
         else:
             self.variation_var.set(EMPTY_VARIATION)
             self.selected_variation_id = None
             self.variation_status_var.set("Nenhuma variação selecionada.")
-
-        if old_base_label in self.base_variation_by_label:
-            self.base_variation_var.set(old_base_label)
-        else:
             self.base_variation_var.set(EMPTY_BASE_VARIATION)
 
         self.material_by_label = {}
@@ -239,10 +251,12 @@ class CostsView(ctk.CTkFrame):
         if not row:
             self.selected_variation_id = None
             self.variation_status_var.set("Nenhuma variação selecionada.")
+            self.base_variation_var.set(EMPTY_BASE_VARIATION)
             self.refresh_recipe()
             return
         self.selected_variation_id = int(row["id"])
         self.update_variation_status(row)
+        self.load_rule_fields(row)
         self.refresh_recipe()
 
     def update_variation_status(self, row: dict) -> None:
@@ -250,13 +264,21 @@ class CostsView(ctk.CTkFrame):
         origem = row.get("origem_custo") or "sem origem"
         rule = ""
         if row.get("base_variacao_id"):
-            rule = (
-                f" | Regra: base {row.get('base_produto_pai') or ''} / "
-                f"{row.get('base_nome_variacao') or ''} x {self._num(row.get('regra_multiplicador') or 1)}"
-            )
+            base_name = f"{row.get('base_produto_pai') or ''} / {row.get('base_nome_variacao') or ''}"
+            rule = f" | Regra: {self._clip(base_name, 70)} x {self._num(row.get('regra_multiplicador') or 1)}"
         self.variation_status_var.set(
-            f"Selecionada: {row['produto_pai']} / {row['nome_variacao']} | Custo atual: {cost} | Origem: {origem}{rule}"
+            f"Selecionada: {self._clip(row['produto_pai'], 60)} / {self._clip(row['nome_variacao'], 45)} | Custo atual: {cost} | Origem: {origem}{rule}"
         )
+
+    def load_rule_fields(self, row: dict, fallback_base_id: int | None = None) -> None:
+        base_id = int(row["base_variacao_id"]) if row.get("base_variacao_id") else fallback_base_id
+        base_label = self._label_for_id(self.base_variation_by_label, base_id)
+        self.base_variation_var.set(base_label or EMPTY_BASE_VARIATION)
+        if row.get("regra_multiplicador"):
+            self.multiplier_var.set(self._num(row.get("regra_multiplicador") or 1))
+            self.rule_description_var.set(row.get("regra_descricao") or "")
+        elif not self.multiplier_var.get().strip():
+            self.multiplier_var.set("1")
 
     def apply_multiplier_cost_rule(self) -> None:
         if self.selected_variation_id is None:
@@ -280,6 +302,9 @@ class CostsView(ctk.CTkFrame):
         except ValueError as exc:
             messagebox.showerror("Erro na regra", str(exc))
             return
+        self.rule_result_var.set(
+            f"Regra aplicada: custo atual = {brl(cost)} ({self._clip(base['produto_pai'], 35)} / {self._clip(base['nome_variacao'], 30)} × {self._num(multiplier)})."
+        )
         self.refresh()
         messagebox.showinfo("Regra aplicada", f"Custo aplicado pela regra: {brl(cost)}")
 
@@ -291,6 +316,7 @@ class CostsView(ctk.CTkFrame):
         if not removed:
             messagebox.showinfo("Sem regra", "Essa variação não possui regra multiplicadora ativa.")
             return
+        self.rule_result_var.set("Regra removida. O custo atual não foi apagado.")
         self.refresh()
         messagebox.showinfo("Regra removida", "A regra multiplicadora foi removida. O custo atual não foi apagado.")
 
@@ -349,6 +375,7 @@ class CostsView(ctk.CTkFrame):
             return
         save_variation_cost(self.selected_variation_id, cost, origem_custo="manual")
         self.manual_cost_var.set("")
+        self.rule_result_var.set("Custo manual aplicado. Se havia regra multiplicadora nessa variação, ela foi removida.")
         self.refresh()
         messagebox.showinfo("Custo salvo", "Custo manual salvo na variação.")
 
@@ -367,14 +394,16 @@ class CostsView(ctk.CTkFrame):
         if not removed:
             messagebox.showinfo("Sem custo", "Essa variação não possui custo ativo para remover.")
             return
+        self.rule_result_var.set("Custo atual removido. A regra ativa, se existia, também foi removida.")
         self.refresh()
         messagebox.showinfo("Custo removido", "Custo atual removido da variação.")
 
     def refresh_recipe(self) -> None:
+        selected_row = self.get_selected_variation_row()
         if self.selected_variation_id is None:
             self.recipe_items = []
             self.recipe_table.set_rows([])
-            self.recipe_total_var.set("Custo total da ficha: R$ 0,00")
+            self.recipe_total_var.set("Custo atual da variação: R$ 0,00")
             self.recipe_item_by_label = {}
             self.recipe_item_menu.configure(values=[EMPTY_RECIPE_ITEM])
             self.recipe_item_var.set(EMPTY_RECIPE_ITEM)
@@ -400,7 +429,15 @@ class CostsView(ctk.CTkFrame):
         self.recipe_table.set_rows(rows)
         self.recipe_item_menu.configure(values=recipe_labels or [EMPTY_RECIPE_ITEM])
         self.recipe_item_var.set(recipe_labels[0] if recipe_labels else EMPTY_RECIPE_ITEM)
-        self.recipe_total_var.set(f"Custo total da ficha: {brl(calculate_recipe_cost(self.selected_variation_id))}")
+
+        recipe_cost = calculate_recipe_cost(self.selected_variation_id)
+        if self.recipe_items:
+            self.recipe_total_var.set(f"Custo da ficha manual: {brl(recipe_cost)}")
+        elif selected_row and selected_row.get("custo_unitario") is not None:
+            origem = selected_row.get("origem_custo") or "sem origem"
+            self.recipe_total_var.set(f"Custo atual da variação: {brl(selected_row['custo_unitario'])} | Origem: {origem} | Ficha manual vazia")
+        else:
+            self.recipe_total_var.set("Custo atual da variação: Pendente | Ficha manual vazia")
 
     def remove_selected_recipe_item(self) -> None:
         label = self.recipe_item_var.get()
@@ -435,6 +472,7 @@ class CostsView(ctk.CTkFrame):
         if cost <= 0:
             messagebox.showwarning("Atenção", "A ficha técnica ainda não tem custo calculado.")
             return
+        self.rule_result_var.set("Custo aplicado pela ficha técnica manual.")
         self.refresh()
         messagebox.showinfo("Custo aplicado", f"Custo calculado aplicado na variação: {brl(cost)}")
 
@@ -446,15 +484,25 @@ class CostsView(ctk.CTkFrame):
                 return material
         return None
 
+    def get_selected_variation_row(self) -> dict | None:
+        if self.selected_variation_id is None:
+            return None
+        for row in self.variations:
+            if int(row["id"]) == self.selected_variation_id:
+                return row
+        return None
+
     def _variation_label(self, row: dict) -> str:
         cost = brl(row["custo_unitario"]) if row.get("custo_unitario") is not None else "Pendente"
-        return f"{row['id']} | {row['produto_pai']} | {row['nome_variacao']} | {cost}"
+        product = self._clip(row["produto_pai"], 34)
+        variation = self._clip(row["nome_variacao"], 30)
+        return f"{row['id']} | {product} / {variation} | {cost}"
 
     def _material_label(self, row: dict) -> str:
-        return f"{row['id']} | {row['nome']} | {brl(row['custo_por_unidade_uso'])}/{row['unidade_uso']}"
+        return f"{row['id']} | {self._clip(row['nome'], 38)} | {brl(row['custo_por_unidade_uso'])}/{row['unidade_uso']}"
 
     def _recipe_item_label(self, item: dict) -> str:
-        return f"{item['id']} | {item['insumo_nome']} | {self._num(item['quantidade_usada'])} {item['unidade_uso']} | {brl(item['custo_item'])}"
+        return f"{item['id']} | {self._clip(item['insumo_nome'], 32)} | {self._num(item['quantidade_usada'])} {item['unidade_uso']} | {brl(item['custo_item'])}"
 
     def _label_for_id(self, mapping: dict[str, dict], item_id: int | None) -> str | None:
         if item_id is None:
@@ -463,6 +511,18 @@ class CostsView(ctk.CTkFrame):
             if int(row["id"]) == int(item_id):
                 return label
         return None
+
+    def _id_from_label(self, mapping: dict[str, dict], label: str) -> int | None:
+        row = mapping.get(label)
+        if not row:
+            return None
+        return int(row["id"])
+
+    def _clip(self, text, limit: int) -> str:
+        value = str(text or "")
+        if len(value) <= limit:
+            return value
+        return value[: limit - 3] + "..."
 
     def _num(self, value) -> str:
         value = float(value or 0)
