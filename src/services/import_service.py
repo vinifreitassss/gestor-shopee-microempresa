@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from src.calculators import calculate_sale_profit
-from src.database import get_connection, now_iso
+from src.database import fetch_all, get_connection, now_iso
 from src.importer import ImportedLine, ShopeeImporter
 from src.services.settings_service import get_setting_float
 from src.utils import mes_referencia_from_date
@@ -83,6 +83,68 @@ def save_importation(
         _upsert_products_and_sales(conn, importacao_id, lines, data_inicio, data_fim, mes_ref)
 
     return importacao_id
+
+
+def list_importations() -> list[dict]:
+    return fetch_all(
+        """
+        SELECT
+            id,
+            arquivo_nome,
+            tipo_periodo,
+            data_inicio,
+            data_fim,
+            mes_referencia,
+            status,
+            criado_em
+        FROM importacoes
+        ORDER BY criado_em DESC
+        LIMIT 100
+        """
+    )
+
+
+def get_importation(importacao_id: int) -> dict | None:
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT
+                id,
+                arquivo_nome,
+                tipo_periodo,
+                data_inicio,
+                data_fim,
+                mes_referencia,
+                status,
+                criado_em,
+                (
+                    SELECT COUNT(*)
+                    FROM vendas_contabilizadas v
+                    WHERE v.importacao_id = importacoes.id
+                ) AS vendas_contabilizadas
+            FROM importacoes
+            WHERE id = ?
+            """,
+            (importacao_id,),
+        ).fetchone()
+
+
+def delete_importation(importacao_id: int) -> bool:
+    """Exclui uma planilha importada e suas vendas vinculadas.
+
+    As tabelas linhas_importadas e vendas_contabilizadas usam ON DELETE CASCADE,
+    então apagar a importação remove a apuração gerada por aquela planilha.
+    Produtos, variações e custos cadastrados são mantidos.
+    """
+    with get_connection() as conn:
+        current = conn.execute(
+            "SELECT id FROM importacoes WHERE id = ?",
+            (importacao_id,),
+        ).fetchone()
+        if not current:
+            return False
+        conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
+        return True
 
 
 def _upsert_products_and_sales(conn, importacao_id: int, lines: list[ImportedLine], data_inicio: date, data_fim: date, mes_ref: str) -> None:
@@ -219,8 +281,6 @@ def _get_current_cost(conn, variacao_id: int) -> float | None:
 
 
 def find_importations_same_period(tipo_periodo: str, data_inicio: date, data_fim: date) -> list[dict]:
-    from src.database import fetch_all
-
     return fetch_all(
         """
         SELECT * FROM importacoes
