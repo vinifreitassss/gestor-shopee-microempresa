@@ -1,6 +1,4 @@
 import customtkinter as ctk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 
 from src.services.reports_service import current_month_reference, get_dashboard_summary, get_product_ranking
 from src.ui.components import MetricCard, SimpleTable
@@ -115,6 +113,25 @@ class DashboardView(ctk.CTkFrame):
         if self.chart_canvas is not None:
             self.chart_canvas.get_tk_widget().destroy()
             self.chart_canvas = None
+
+        for child in self.chart_frame.winfo_children():
+            child.destroy()
+
+        try:
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ModuleNotFoundError:
+            ctk.CTkLabel(
+                self.chart_frame,
+                text=(
+                    "Gráfico indisponível.\n\n"
+                    "Instale o matplotlib para habilitar a pizza:\n"
+                    "py -m pip install matplotlib"
+                ),
+                text_color="gray",
+                justify="center",
+            ).pack(expand=True, padx=16, pady=16)
+            return
 
         metric_label = self.chart_metric_var.get()
         metric_key = {
