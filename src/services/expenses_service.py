@@ -28,9 +28,10 @@ def add_expense(data: date, categoria: str, descricao: str, valor: float) -> Non
         )
 
 
-def delete_expense(expense_id: int) -> None:
+def delete_expense(expense_id: int) -> bool:
     with get_connection() as conn:
-        conn.execute("DELETE FROM despesas WHERE id = ?", (expense_id,))
+        cur = conn.execute("DELETE FROM despesas WHERE id = ?", (expense_id,))
+        return cur.rowcount > 0
 
 
 def list_recurring_expenses() -> list[dict]:
@@ -54,6 +55,15 @@ def add_recurring_expense(categoria: str, descricao: str, valor: float, dia_venc
             """,
             (categoria, descricao, valor, dia_vencimento, now_iso()),
         )
+
+
+def deactivate_recurring_expense(recurring_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE despesas_recorrentes SET ativo = 0 WHERE id = ?",
+            (recurring_id,),
+        )
+        return cur.rowcount > 0
 
 
 def generate_recurring_for_month(mes_referencia: str) -> int:
