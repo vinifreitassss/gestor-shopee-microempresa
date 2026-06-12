@@ -21,9 +21,11 @@ class CostsView(ctk.CTkFrame):
         super().__init__(master)
         self.selected_variation_id: int | None = None
         self.selected_input_id: int | None = None
+        self.selected_input_minimum: float = 0
         self.cost_var = ctk.StringVar(value="")
         self.quantidade_usada_var = ctk.StringVar(value="")
         self.status_var = ctk.StringVar(value="Selecione uma variação para montar a ficha técnica.")
+        self.input_status_var = ctk.StringVar(value="Selecione um insumo e informe quanto dele essa variação usa.")
         self.recipe_total_var = ctk.StringVar(value="Custo calculado: R$ 0,00")
         self._build()
 
@@ -31,7 +33,7 @@ class CostsView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Custos das Variações", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
         ctk.CTkLabel(
             self,
-            text="Use custo manual para produto pronto ou monte uma ficha técnica com insumos para produto fabricado.",
+            text="Produto pronto: use custo manual. Produto fabricado: monte a ficha técnica informando quanto de cada insumo é usado.",
             text_color="gray",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
@@ -69,27 +71,34 @@ class CostsView(ctk.CTkFrame):
 
         inputs_box = ctk.CTkFrame(content)
         inputs_box.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
-        inputs_box.grid_rowconfigure(1, weight=1)
+        inputs_box.grid_rowconfigure(2, weight=1)
         inputs_box.grid_columnconfigure(0, weight=1)
 
         input_form = ctk.CTkFrame(inputs_box)
         input_form.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        ctk.CTkLabel(input_form, text="Quantidade usada:").pack(side="left", padx=6, pady=6)
-        ctk.CTkEntry(input_form, textvariable=self.quantidade_usada_var, width=110, placeholder_text="Ex.: 90").pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(input_form, text="Qtd usada NESTA variação:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=6, pady=6)
+        ctk.CTkEntry(input_form, textvariable=self.quantidade_usada_var, width=110, placeholder_text="Ex.: 25").pack(side="left", padx=6, pady=6)
         ctk.CTkButton(input_form, text="Adicionar/atualizar", command=self.add_input_to_recipe).pack(side="left", padx=6, pady=6)
+        ctk.CTkButton(input_form, text="Usar mínimo ref.", command=self.use_minimum_reference).pack(side="left", padx=6, pady=6)
+
+        ctk.CTkLabel(
+            inputs_box,
+            textvariable=self.input_status_var,
+            text_color="gray",
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
 
         self.inputs_table = SimpleTable(
             inputs_box,
             [
                 ("id", "ID", 50),
-                ("nome", "Insumo", 190),
-                ("unidade_uso", "Unid.", 65),
-                ("uso_minimo_por_pedido", "Mínimo", 90),
-                ("custo_minimo_por_pedido", "Custo mín.", 100),
+                ("nome", "Insumo", 170),
+                ("unidade_uso", "Unid.", 60),
+                ("custo_por_unidade_uso", "Custo/unid.", 95),
+                ("uso_minimo_por_pedido", "Mín. ref.", 80),
             ],
-            height=13,
+            height=12,
         )
-        self.inputs_table.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+        self.inputs_table.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
         self.inputs_table.tree.bind("<<TreeviewSelect>>", self.load_input)
 
         recipe_box = ctk.CTkFrame(content)
@@ -107,10 +116,11 @@ class CostsView(ctk.CTkFrame):
             recipe_box,
             [
                 ("id", "ID", 50),
-                ("insumo_nome", "Insumo", 180),
-                ("quantidade_usada", "Qtd usada", 90),
-                ("unidade_uso", "Unid.", 60),
-                ("custo_item", "Custo", 100),
+                ("insumo_nome", "Insumo", 160),
+                ("quantidade_usada", "Qtd usada", 85),
+                ("unidade_uso", "Unid.", 55),
+                ("custo_por_unidade_uso", "Custo/unid.", 90),
+                ("custo_item", "Custo item", 95),
             ],
             height=13,
         )
@@ -145,8 +155,22 @@ class CostsView(ctk.CTkFrame):
         item = get_input(self.selected_input_id)
         if not item:
             return
-        # Por padrão, já joga o mínimo cadastrado, mas você pode alterar antes de adicionar.
-        self.quantidade_usada_var.set(self._num(item["uso_minimo_por_pedido"]))
+        self.selected_input_minimum = float(item["uso_minimo_por_pedido"] or 0)
+        self.quantidade_usada_var.set("")
+        self.input_status_var.set(
+            f"Insumo selecionado: {item['nome']}. Custo por {item['unidade_uso']}: "
+            f"{brl(item['custo_por_unidade_uso'])}. Informe o uso real desta variação. "
+            f"Mínimo ref.: {self._num(item['uso_minimo_por_pedido'])} {item['unidade_uso']}."
+        )
+
+    def use_minimum_reference(self) -> None:
+        if self.selected_input_id is None:
+            messagebox.showwarning("Atenção", "Selecione um insumo primeiro.")
+            return
+        if self.selected_input_minimum <= 0:
+            messagebox.showwarning("Atenção", "Esse insumo não tem mínimo de referência válido.")
+            return
+        self.quantidade_usada_var.set(self._num(self.selected_input_minimum))
 
     def add_input_to_recipe(self) -> None:
         if self.selected_variation_id is None:
@@ -157,9 +181,10 @@ class CostsView(ctk.CTkFrame):
             return
         quantidade = money_to_float(self.quantidade_usada_var.get())
         if quantidade <= 0:
-            messagebox.showwarning("Atenção", "Informe quanto desse insumo é usado na variação.")
+            messagebox.showwarning("Atenção", "Informe quanto desse insumo é usado nessa variação. Ex.: se usa 25 peças de acrílico, informe 25.")
             return
         add_or_update_recipe_item(self.selected_variation_id, self.selected_input_id, quantidade)
+        self.quantidade_usada_var.set("")
         self.refresh_recipe()
 
     def remove_recipe_item(self) -> None:
@@ -195,6 +220,7 @@ class CostsView(ctk.CTkFrame):
                     "insumo_nome": row["insumo_nome"],
                     "quantidade_usada": self._num(row["quantidade_usada"]),
                     "unidade_uso": row["unidade_uso"],
+                    "custo_por_unidade_uso": brl(row["custo_por_unidade_uso"]),
                     "custo_item": brl(row["custo_item"]),
                 }
             )
@@ -222,8 +248,8 @@ class CostsView(ctk.CTkFrame):
                     "id": row["id"],
                     "nome": row["nome"],
                     "unidade_uso": row["unidade_uso"],
+                    "custo_por_unidade_uso": brl(row["custo_por_unidade_uso"]),
                     "uso_minimo_por_pedido": self._num(row["uso_minimo_por_pedido"]),
-                    "custo_minimo_por_pedido": brl(row["custo_minimo_por_pedido"]),
                 }
             )
         self.inputs_table.set_rows(input_rows)
