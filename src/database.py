@@ -125,6 +125,17 @@ def init_database() -> None:
                 criado_em TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ficha_tecnica_insumos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                variacao_id INTEGER NOT NULL,
+                insumo_id INTEGER NOT NULL,
+                quantidade_usada REAL NOT NULL,
+                criado_em TEXT NOT NULL,
+                UNIQUE (variacao_id, insumo_id),
+                FOREIGN KEY (variacao_id) REFERENCES variacoes(id) ON DELETE CASCADE,
+                FOREIGN KEY (insumo_id) REFERENCES insumos(id)
+            );
+
             CREATE TABLE IF NOT EXISTS vendas_contabilizadas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 importacao_id INTEGER NOT NULL,
