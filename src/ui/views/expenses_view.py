@@ -3,7 +3,15 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
-from src.services.expenses_service import add_expense, add_recurring_expense, generate_recurring_for_month, list_expenses, list_recurring_expenses
+from src.services.expenses_service import (
+    add_expense,
+    add_recurring_expense,
+    deactivate_recurring_expense,
+    delete_expense,
+    generate_recurring_for_month,
+    list_expenses,
+    list_recurring_expenses,
+)
 from src.services.reports_service import current_month_reference
 from src.ui.components import SimpleTable
 from src.ui.theme import PAD
@@ -45,6 +53,7 @@ class ExpensesView(ctk.CTkFrame):
         ctk.CTkLabel(controls, text="Mês:").pack(side="left", padx=8, pady=8)
         ctk.CTkEntry(controls, textvariable=self.month_var, width=90).pack(side="left", padx=8, pady=8)
         ctk.CTkButton(controls, text="Atualizar", command=self.refresh).pack(side="left", padx=8, pady=8)
+        ctk.CTkButton(controls, text="Excluir despesa selecionada", command=self.delete_selected_expense).pack(side="left", padx=8, pady=8)
         ctk.CTkButton(controls, text="Gerar recorrentes do mês", command=self.generate_recurring).pack(side="left", padx=8, pady=8)
 
         self.table = SimpleTable(
@@ -68,10 +77,12 @@ class ExpensesView(ctk.CTkFrame):
         ctk.CTkEntry(rec_form, textvariable=self.rec_value_var, width=110, placeholder_text="Valor").grid(row=0, column=2, padx=8, pady=8)
         ctk.CTkEntry(rec_form, textvariable=self.rec_day_var, width=90, placeholder_text="Dia").grid(row=0, column=3, padx=8, pady=8)
         ctk.CTkButton(rec_form, text="Cadastrar recorrente", command=self.add_recurring).grid(row=0, column=4, padx=8, pady=8)
+        ctk.CTkButton(rec_form, text="Desativar recorrente selecionada", command=self.deactivate_selected_recurring).grid(row=0, column=5, padx=8, pady=8)
 
         self.recurring_table = SimpleTable(
             self,
             [
+                ("id", "ID", 60),
                 ("categoria", "Categoria", 160),
                 ("descricao", "Descrição", 360),
                 ("valor_padrao", "Valor", 120),
@@ -100,6 +111,22 @@ class ExpensesView(ctk.CTkFrame):
         self.month_var.set(f"{expense_date.year:04d}-{expense_date.month:02d}")
         self.refresh()
 
+    def delete_selected_expense(self) -> None:
+        selected = self.table.selected_values()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma despesa na tabela.")
+            return
+        expense_id = int(selected[0])
+        ok = messagebox.askyesno("Excluir despesa", "Deseja excluir a despesa selecionada? Essa ação remove o valor do DRE.")
+        if not ok:
+            return
+        deleted = delete_expense(expense_id)
+        if not deleted:
+            messagebox.showinfo("Despesa não encontrada", "Essa despesa não foi encontrada ou já foi removida.")
+            return
+        self.refresh()
+        messagebox.showinfo("Despesa excluída", "Despesa removida com sucesso.")
+
     def add_recurring(self) -> None:
         try:
             category = self.rec_category_var.get().strip()
@@ -118,6 +145,26 @@ class ExpensesView(ctk.CTkFrame):
         self.rec_value_var.set("")
         self.rec_day_var.set("1")
         self.refresh()
+
+    def deactivate_selected_recurring(self) -> None:
+        selected = self.recurring_table.selected_values()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma despesa recorrente na tabela.")
+            return
+        recurring_id = int(selected[0])
+        ok = messagebox.askyesno(
+            "Desativar recorrente",
+            "Deseja desativar essa recorrente? Ela não será gerada nos próximos meses.\n\n"
+            "Despesas já lançadas por ela continuam existindo e podem ser excluídas individualmente acima.",
+        )
+        if not ok:
+            return
+        deactivated = deactivate_recurring_expense(recurring_id)
+        if not deactivated:
+            messagebox.showinfo("Recorrente não encontrada", "Essa recorrente não foi encontrada ou já foi desativada.")
+            return
+        self.refresh()
+        messagebox.showinfo("Recorrente desativada", "Despesa recorrente desativada com sucesso.")
 
     def generate_recurring(self) -> None:
         created = generate_recurring_for_month(self.month_var.get().strip())
