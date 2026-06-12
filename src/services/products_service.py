@@ -33,6 +33,15 @@ def list_variations() -> list[dict]:
 
 
 def save_variation_cost(variacao_id: int, custo_unitario: float, origem_custo: str = "manual") -> None:
+    """Salva o custo atual da variação e recalcula vendas abertas.
+
+    Refinamento da regra:
+    - Atualizar custo da VARIAÇÃO é uma correção/apuração deliberada.
+      Portanto recalcula vendas de meses ainda não fechados.
+    - Meses fechados continuam congelados.
+    - Alterar custo de INSUMO sozinho não chama esta função; só impacta o DRE
+      quando o usuário aplicar novamente o custo calculado na variação.
+    """
     with get_connection() as conn:
         conn.execute(
             "UPDATE custos_variacao SET ativo = 0 WHERE variacao_id = ?",
@@ -45,7 +54,7 @@ def save_variation_cost(variacao_id: int, custo_unitario: float, origem_custo: s
             """,
             (variacao_id, custo_unitario, origem_custo, now_iso()),
         )
-        _recalculate_incomplete_sales(conn, variacao_id, custo_unitario)
+        _recalculate_open_sales(conn, variacao_id, custo_unitario)
 
 
 def remove_current_variation_cost(variacao_id: int) -> bool:
@@ -84,12 +93,17 @@ def set_variation_product_type(variacao_id: int, tipo_produto: str) -> None:
         )
 
 
-def _recalculate_incomplete_sales(conn, variacao_id: int, custo_unitario: float) -> None:
+def _recalculate_open_sales(conn, variacao_id: int, custo_unitario: float) -> None:
     rows = conn.execute(
         """
         SELECT id, unidades, faturamento, imposto_valor, comissao_valor, taxa_fixa_valor
         FROM vendas_contabilizadas
-        WHERE variacao_id = ? AND lucro_incompleto = 1
+        WHERE variacao_id = ?
+          AND mes_referencia NOT IN (
+              SELECT mes_referencia
+              FROM fechamentos_mensais
+              WHERE status = 'fechado'
+          )
         """,
         (variacao_id,),
     ).fetchall()
