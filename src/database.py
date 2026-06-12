@@ -45,6 +45,13 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {row["name"] for row in columns}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_database() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
@@ -121,6 +128,8 @@ def init_database() -> None:
                 custo_compra REAL NOT NULL,
                 uso_minimo_por_pedido REAL NOT NULL,
                 estoque_atual_uso REAL NOT NULL DEFAULT 0,
+                valor_total_estoque REAL NOT NULL DEFAULT 0,
+                referencia_uso_custo TEXT DEFAULT '',
                 ativo INTEGER NOT NULL DEFAULT 1,
                 criado_em TEXT NOT NULL
             );
@@ -202,6 +211,9 @@ def init_database() -> None:
             );
             """
         )
+
+        _ensure_column(conn, "insumos", "valor_total_estoque", "REAL NOT NULL DEFAULT 0")
+        _ensure_column(conn, "insumos", "referencia_uso_custo", "TEXT DEFAULT ''")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
