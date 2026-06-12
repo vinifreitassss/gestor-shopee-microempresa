@@ -8,21 +8,25 @@ def add_input(
     custo_compra: float,
     uso_minimo_por_pedido: float,
     estoque_atual_uso: float,
+    valor_total_estoque: float = 0,
+    referencia_uso_custo: str = "",
 ) -> None:
     """Cadastra uma matéria-prima.
 
-    Observação importante sobre o banco legado:
-    - custo_compra agora representa o CUSTO REFERÊNCIA por unidade de uso.
-      Ex.: R$ por cm², R$ por cm, R$ por unidade.
-    - quantidade_total_uso é mantido só por compatibilidade e recebe 1 na tela nova.
+    Campos conceituais:
+    - custo_compra: custo referência usado no cálculo dos produtos.
+    - estoque_atual_uso: quantidade física em estoque, na unidade ref.
+    - valor_total_estoque: valor total gasto/investido nesse estoque, para auditoria.
+    - referencia_uso_custo: observação de como usar esse custo, ex.: "medalha 5 cm usa 25 cm²".
     """
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO insumos (
                 nome, unidade_uso, quantidade_total_uso, custo_compra,
-                uso_minimo_por_pedido, estoque_atual_uso, ativo, criado_em
-            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                uso_minimo_por_pedido, estoque_atual_uso, valor_total_estoque,
+                referencia_uso_custo, ativo, criado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (
                 nome,
@@ -31,6 +35,8 @@ def add_input(
                 custo_compra,
                 uso_minimo_por_pedido,
                 estoque_atual_uso,
+                valor_total_estoque,
+                referencia_uso_custo,
                 now_iso(),
             ),
         )
@@ -44,6 +50,8 @@ def update_input(
     custo_compra: float,
     uso_minimo_por_pedido: float,
     estoque_atual_uso: float,
+    valor_total_estoque: float = 0,
+    referencia_uso_custo: str = "",
 ) -> None:
     with get_connection() as conn:
         conn.execute(
@@ -54,7 +62,9 @@ def update_input(
                 quantidade_total_uso = ?,
                 custo_compra = ?,
                 uso_minimo_por_pedido = ?,
-                estoque_atual_uso = ?
+                estoque_atual_uso = ?,
+                valor_total_estoque = ?,
+                referencia_uso_custo = ?
             WHERE id = ?
             """,
             (
@@ -64,6 +74,8 @@ def update_input(
                 custo_compra,
                 uso_minimo_por_pedido,
                 estoque_atual_uso,
+                valor_total_estoque,
+                referencia_uso_custo,
                 input_id,
             ),
         )
@@ -80,6 +92,8 @@ def get_input(input_id: int) -> dict | None:
             custo_compra,
             uso_minimo_por_pedido,
             estoque_atual_uso,
+            valor_total_estoque,
+            referencia_uso_custo,
             criado_em
         FROM insumos
         WHERE id = ? AND ativo = 1
@@ -102,6 +116,8 @@ def list_inputs() -> list[dict]:
             custo_compra,
             uso_minimo_por_pedido,
             estoque_atual_uso,
+            valor_total_estoque,
+            referencia_uso_custo,
             criado_em
         FROM insumos
         WHERE ativo = 1
@@ -112,27 +128,36 @@ def list_inputs() -> list[dict]:
 
 
 def _with_calculated_fields(row: dict) -> dict:
-    # A partir desta versão, custo_compra é o custo referência direto.
-    # Não dividimos pelo estoque nem pela quantidade total.
     custo_ref = float(row["custo_compra"] or 0)
     uso_ref = float(row["uso_minimo_por_pedido"] or 0)
     estoque_atual = float(row["estoque_atual_uso"] or 0)
+    valor_total_estoque = float(row.get("valor_total_estoque") or 0)
+
     custo_uso_ref = custo_ref * uso_ref if uso_ref > 0 else 0
-    valor_estoque = custo_ref * estoque_atual
+    custo_medio_estoque = valor_total_estoque / estoque_atual if estoque_atual > 0 else 0
+    valor_estoque = valor_total_estoque if valor_total_estoque > 0 else custo_ref * estoque_atual
+
     return {
         **row,
         "custo_por_unidade_uso": custo_ref,
         "custo_minimo_por_pedido": custo_uso_ref,
+        "custo_medio_estoque": custo_medio_estoque,
         "valor_estoque": valor_estoque,
     }
 
 
-def update_input_stock(input_id: int, estoque_atual_uso: float) -> None:
+def update_input_stock(input_id: int, estoque_atual_uso: float, valor_total_estoque: float | None = None) -> None:
     with get_connection() as conn:
-        conn.execute(
-            "UPDATE insumos SET estoque_atual_uso = ? WHERE id = ?",
-            (estoque_atual_uso, input_id),
-        )
+        if valor_total_estoque is None:
+            conn.execute(
+                "UPDATE insumos SET estoque_atual_uso = ? WHERE id = ?",
+                (estoque_atual_uso, input_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE insumos SET estoque_atual_uso = ?, valor_total_estoque = ? WHERE id = ?",
+                (estoque_atual_uso, valor_total_estoque, input_id),
+            )
 
 
 def deactivate_input(input_id: int) -> None:
