@@ -154,6 +154,10 @@ def _upsert_parent_product(conn, id_item_shopee: str, name: str) -> int:
             (id_item_shopee,),
         ).fetchone()
     if existing:
+        conn.execute(
+            "UPDATE produtos_pai SET nome = ? WHERE id = ?",
+            (name, existing["id"]),
+        )
         return int(existing["id"])
 
     cursor = conn.execute(
@@ -174,6 +178,16 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
             (variation_id,),
         ).fetchone()
     if existing:
+        conn.execute(
+            """
+            UPDATE variacoes
+            SET produto_pai_id = ?,
+                nome_variacao = ?,
+                sku = COALESCE(NULLIF(?, ''), sku)
+            WHERE id = ?
+            """,
+            (produto_pai_id, variation_name or "Sem variação", sku or "", existing["id"]),
+        )
         return int(existing["id"])
 
     cursor = conn.execute(
