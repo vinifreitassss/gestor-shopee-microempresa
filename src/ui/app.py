@@ -49,7 +49,7 @@ class GestorApp(ctk.CTk):
             "Custos",
             "Insumos / Estoque",
             "Despesas",
-            "DRE Mensal",
+            "Resultado Operacional",
             "Configurações",
         ]
         for item in menu_items:
@@ -74,6 +74,7 @@ class GestorApp(ctk.CTk):
                 "Insumos / Estoque": InputsView,
                 "Despesas": ExpensesView,
                 "DRE Mensal": DreView,
+                "Resultado Operacional": DreView,
                 "Configurações": SettingsView,
             }[name]
             self.views[name] = cls(self.content)
