@@ -20,13 +20,11 @@ class InputsView(ctk.CTkFrame):
         self.selected_input_id: int | None = None
         self.nome_var = ctk.StringVar(value="")
         self.unidade_var = ctk.StringVar(value="cm²")
-        self.quantidade_var = ctk.StringVar(value="")
-        self.custo_var = ctk.StringVar(value="")
-        # Mantém o campo antigo do banco, mas agora ele é só uma referência opcional.
-        self.uso_referencia_var = ctk.StringVar(value="")
+        self.custo_ref_var = ctk.StringVar(value="")
+        self.uso_ref_var = ctk.StringVar(value="")
         self.estoque_var = ctk.StringVar(value="")
-        self.status_var = ctk.StringVar(value="Modo: novo insumo")
-        self.preview_var = ctk.StringVar(value="Preencha os dados para ver o custo base.")
+        self.status_var = ctk.StringVar(value="Modo: nova matéria-prima")
+        self.preview_var = ctk.StringVar(value="Preencha o custo ref. para ver o cálculo.")
         self._build()
         self._bind_live_preview()
 
@@ -34,19 +32,18 @@ class InputsView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Insumos / Estoque", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
         ctk.CTkLabel(
             self,
-            text="Cadastre a matéria-prima pela unidade mínima de custo. Ex.: acrílico em cm², adesivo em cm², fita em cm ou unidade.",
+            text="Cadastre o custo referência da matéria-prima. O produto usa esse custo ref. multiplicado pela quantidade usada.",
             text_color="gray",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
         form = ctk.CTkFrame(self)
         form.pack(fill="x", padx=PAD, pady=(0, PAD))
 
-        self._labeled_entry(form, "Matéria-prima", self.nome_var, 0, 0, 240, "Ex.: Acrílico cristal 2mm")
-        self._labeled_entry(form, "Unidade mínima de custo", self.unidade_var, 0, 1, 130, "cm², cm, un.")
-        self._labeled_entry(form, "Qtd total comprada nessa unidade", self.quantidade_var, 0, 2, 200, "Ex.: 21525 cm²")
-        self._labeled_entry(form, "Custo total da compra", self.custo_var, 0, 3, 160, "Ex.: 146,85")
-        self._labeled_entry(form, "Uso ref. opcional", self.uso_referencia_var, 0, 4, 150, "Ex.: 25")
-        self._labeled_entry(form, "Estoque atual nessa unidade", self.estoque_var, 0, 5, 170, "Ex.: 21525")
+        self._labeled_entry(form, "Matéria-prima", self.nome_var, 0, 0, 250, "Ex.: Acrílico cristal 2mm")
+        self._labeled_entry(form, "Unidade ref.", self.unidade_var, 0, 1, 120, "cm², cm, un.")
+        self._labeled_entry(form, "Custo ref. por unidade", self.custo_ref_var, 0, 2, 170, "Ex.: 0,0068")
+        self._labeled_entry(form, "Uso ref. opcional", self.uso_ref_var, 0, 3, 150, "Ex.: 25")
+        self._labeled_entry(form, "Estoque atual na unid. ref.", self.estoque_var, 0, 4, 190, "Ex.: 21525")
 
         buttons = ctk.CTkFrame(self)
         buttons.pack(fill="x", padx=PAD, pady=(0, PAD))
@@ -58,12 +55,12 @@ class InputsView(ctk.CTkFrame):
 
         preview = ctk.CTkFrame(self)
         preview.pack(fill="x", padx=PAD, pady=(0, PAD))
-        ctk.CTkLabel(preview, text="Custo base:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=8, pady=8)
+        ctk.CTkLabel(preview, text="Prévia:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=8, pady=8)
         ctk.CTkLabel(preview, textvariable=self.preview_var).pack(side="left", padx=8, pady=8)
 
         ctk.CTkLabel(
             self,
-            text="Clique em uma linha para editar. Na aba Custos, você informará quanto dessa matéria-prima cada variação usa.",
+            text="Na aba Custos, o app fará: custo ref. × quantidade usada pela variação.",
             text_color="gray",
         ).pack(anchor="w", padx=PAD, pady=(0, 4))
 
@@ -71,13 +68,11 @@ class InputsView(ctk.CTkFrame):
             self,
             [
                 ("id", "ID", 60),
-                ("nome", "Matéria-prima", 220),
-                ("unidade_uso", "Unid. base", 90),
-                ("quantidade_total_uso", "Qtd compra", 110),
-                ("custo_compra", "Custo compra", 120),
-                ("custo_por_unidade_uso", "Custo base", 120),
+                ("nome", "Matéria-prima", 250),
+                ("unidade_uso", "Unid. ref.", 90),
+                ("custo_por_unidade_uso", "Custo ref.", 120),
                 ("uso_minimo_por_pedido", "Uso ref.", 90),
-                ("custo_minimo_por_pedido", "Custo ref.", 100),
+                ("custo_minimo_por_pedido", "Custo uso ref.", 120),
                 ("estoque_atual_uso", "Estoque", 100),
                 ("valor_estoque", "Valor estoque", 120),
             ],
@@ -95,55 +90,51 @@ class InputsView(ctk.CTkFrame):
         return entry
 
     def _bind_live_preview(self) -> None:
-        for variable in [
-            self.quantidade_var,
-            self.custo_var,
-            self.uso_referencia_var,
-            self.estoque_var,
-        ]:
+        for variable in [self.custo_ref_var, self.uso_ref_var, self.estoque_var]:
             variable.trace_add("write", lambda *_: self.update_preview())
 
     def update_preview(self) -> None:
-        quantidade = money_to_float(self.quantidade_var.get())
-        custo = money_to_float(self.custo_var.get())
-        uso_ref = money_to_float(self.uso_referencia_var.get())
+        custo_ref = money_to_float(self.custo_ref_var.get())
+        uso_ref = money_to_float(self.uso_ref_var.get())
         estoque = money_to_float(self.estoque_var.get())
+        unidade = self.unidade_var.get().strip() or "un."
 
-        if quantidade <= 0 or custo <= 0:
-            self.preview_var.set("Preencha quantidade comprada e custo total para calcular o custo base.")
+        if custo_ref <= 0:
+            self.preview_var.set("Informe o custo ref. por unidade. Ex.: R$ por cm², R$ por cm ou R$ por unidade.")
             return
 
-        custo_base = custo / quantidade
-        custo_ref = custo_base * uso_ref if uso_ref > 0 else 0
-        valor_estoque = custo_base * estoque
-        unidade = self.unidade_var.get().strip() or "un."
+        custo_uso_ref = custo_ref * uso_ref if uso_ref > 0 else 0
+        valor_estoque = custo_ref * estoque
         if uso_ref > 0:
             self.preview_var.set(
-                f"Custo por {unidade}: {brl(custo_base)} | "
-                f"Custo do uso ref.: {brl(custo_ref)} | "
+                f"Custo ref.: {brl(custo_ref)} por {unidade} | "
+                f"Uso ref.: {self._num(uso_ref)} {unidade} = {brl(custo_uso_ref)} | "
                 f"Valor em estoque: {brl(valor_estoque)}"
             )
         else:
             self.preview_var.set(
-                f"Custo por {unidade}: {brl(custo_base)} | "
+                f"Custo ref.: {brl(custo_ref)} por {unidade} | "
                 f"Valor em estoque: {brl(valor_estoque)}"
             )
 
     def _read_form(self) -> tuple[str, str, float, float, float, float] | None:
         nome = self.nome_var.get().strip()
         unidade = self.unidade_var.get().strip()
-        quantidade = money_to_float(self.quantidade_var.get())
-        custo = money_to_float(self.custo_var.get())
-        uso_ref = money_to_float(self.uso_referencia_var.get())
+        custo_ref = money_to_float(self.custo_ref_var.get())
+        uso_ref = money_to_float(self.uso_ref_var.get())
         estoque = money_to_float(self.estoque_var.get())
 
-        if not nome or not unidade or quantidade <= 0 or custo <= 0:
+        if not nome or not unidade or custo_ref <= 0:
             messagebox.showwarning(
                 "Atenção",
-                "Preencha matéria-prima, unidade mínima, quantidade total comprada e custo total da compra.",
+                "Preencha matéria-prima, unidade ref. e custo ref. por unidade.",
             )
             return None
-        return nome, unidade, quantidade, custo, uso_ref, estoque
+
+        # Compatibilidade com banco legado:
+        # quantidade_total_uso fica 1 e custo_compra passa a representar custo ref. direto.
+        quantidade_total_uso = 1.0
+        return nome, unidade, quantidade_total_uso, custo_ref, uso_ref, estoque
 
     def add(self) -> None:
         data = self._read_form()
@@ -152,7 +143,7 @@ class InputsView(ctk.CTkFrame):
         add_input(*data)
         self.clear_form()
         self.refresh()
-        messagebox.showinfo("Insumo salvo", "Matéria-prima cadastrada com sucesso.")
+        messagebox.showinfo("Matéria-prima salva", "Matéria-prima cadastrada com sucesso.")
 
     def update_selected(self) -> None:
         if self.selected_input_id is None:
@@ -163,7 +154,7 @@ class InputsView(ctk.CTkFrame):
             return
         update_input(self.selected_input_id, *data)
         self.refresh()
-        messagebox.showinfo("Insumo atualizado", "Dados da matéria-prima atualizados com sucesso.")
+        messagebox.showinfo("Matéria-prima atualizada", "Dados atualizados com sucesso.")
 
     def load_selected(self, _event=None) -> None:
         selected = self.table.selected_values()
@@ -176,9 +167,8 @@ class InputsView(ctk.CTkFrame):
         self.selected_input_id = input_id
         self.nome_var.set(str(item["nome"]))
         self.unidade_var.set(str(item["unidade_uso"]))
-        self.quantidade_var.set(self._num(item["quantidade_total_uso"]))
-        self.custo_var.set(self._num(item["custo_compra"]))
-        self.uso_referencia_var.set(self._num(item["uso_minimo_por_pedido"]))
+        self.custo_ref_var.set(self._num(item["custo_por_unidade_uso"]))
+        self.uso_ref_var.set(self._num(item["uso_minimo_por_pedido"]))
         self.estoque_var.set(self._num(item["estoque_atual_uso"]))
         self.status_var.set(f"Editando matéria-prima ID {input_id}")
         self.update_preview()
@@ -187,12 +177,11 @@ class InputsView(ctk.CTkFrame):
         self.selected_input_id = None
         self.nome_var.set("")
         self.unidade_var.set("cm²")
-        self.quantidade_var.set("")
-        self.custo_var.set("")
-        self.uso_referencia_var.set("")
+        self.custo_ref_var.set("")
+        self.uso_ref_var.set("")
         self.estoque_var.set("")
-        self.status_var.set("Modo: novo insumo")
-        self.preview_var.set("Preencha os dados para ver o custo base.")
+        self.status_var.set("Modo: nova matéria-prima")
+        self.preview_var.set("Preencha o custo ref. para ver o cálculo.")
 
     def deactivate(self) -> None:
         if self.selected_input_id is None:
@@ -213,8 +202,6 @@ class InputsView(ctk.CTkFrame):
                     "id": row["id"],
                     "nome": row["nome"],
                     "unidade_uso": row["unidade_uso"],
-                    "quantidade_total_uso": self._num(row["quantidade_total_uso"]),
-                    "custo_compra": brl(row["custo_compra"]),
                     "custo_por_unidade_uso": brl(row["custo_por_unidade_uso"]),
                     "uso_minimo_por_pedido": self._num(row["uso_minimo_por_pedido"]),
                     "custo_minimo_por_pedido": brl(row["custo_minimo_por_pedido"]),
@@ -229,4 +216,4 @@ class InputsView(ctk.CTkFrame):
         value = float(value or 0)
         if value == 0:
             return ""
-        return f"{value:.4f}".rstrip("0").rstrip(".").replace(".", ",")
+        return f"{value:.6f}".rstrip("0").rstrip(".").replace(".", ",")
