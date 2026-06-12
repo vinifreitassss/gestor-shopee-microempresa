@@ -1,0 +1,1 @@
+# Interface gráfica em CustomTkinter.
