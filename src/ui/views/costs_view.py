@@ -21,11 +21,11 @@ class CostsView(ctk.CTkFrame):
         super().__init__(master)
         self.selected_variation_id: int | None = None
         self.selected_input_id: int | None = None
-        self.selected_input_minimum: float = 0
+        self.selected_input_reference: float = 0
         self.cost_var = ctk.StringVar(value="")
         self.quantidade_usada_var = ctk.StringVar(value="")
         self.status_var = ctk.StringVar(value="Selecione uma variação para montar a ficha técnica.")
-        self.input_status_var = ctk.StringVar(value="Selecione um insumo e informe quanto dele essa variação usa.")
+        self.input_status_var = ctk.StringVar(value="Selecione a matéria-prima e informe a área/medida/unidade usada nesse produto.")
         self.recipe_total_var = ctk.StringVar(value="Custo calculado: R$ 0,00")
         self._build()
 
@@ -33,7 +33,7 @@ class CostsView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Custos das Variações", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
         ctk.CTkLabel(
             self,
-            text="Produto pronto: use custo manual. Produto fabricado: monte a ficha técnica informando quanto de cada insumo é usado.",
+            text="Produto fabricado: escolha as matérias-primas e informe quanto cada variação usa. Ex.: 25 cm² de acrílico + 20 cm² de adesivo + 1 fita.",
             text_color="gray",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
@@ -52,7 +52,7 @@ class CostsView(ctk.CTkFrame):
         content.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(content, text="1. Variações", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
-        ctk.CTkLabel(content, text="2. Insumos cadastrados", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=1, sticky="w", padx=6, pady=(6, 2))
+        ctk.CTkLabel(content, text="2. Matérias-primas", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=1, sticky="w", padx=6, pady=(6, 2))
         ctk.CTkLabel(content, text="3. Ficha técnica da variação", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=2, sticky="w", padx=6, pady=(6, 2))
 
         self.variations_table = SimpleTable(
@@ -76,10 +76,10 @@ class CostsView(ctk.CTkFrame):
 
         input_form = ctk.CTkFrame(inputs_box)
         input_form.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        ctk.CTkLabel(input_form, text="Qtd usada NESTA variação:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(input_form, text="Quanto esta variação usa:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=6, pady=6)
         ctk.CTkEntry(input_form, textvariable=self.quantidade_usada_var, width=110, placeholder_text="Ex.: 25").pack(side="left", padx=6, pady=6)
         ctk.CTkButton(input_form, text="Adicionar/atualizar", command=self.add_input_to_recipe).pack(side="left", padx=6, pady=6)
-        ctk.CTkButton(input_form, text="Usar mínimo ref.", command=self.use_minimum_reference).pack(side="left", padx=6, pady=6)
+        ctk.CTkButton(input_form, text="Usar ref.", command=self.use_reference).pack(side="left", padx=6, pady=6)
 
         ctk.CTkLabel(
             inputs_box,
@@ -91,10 +91,10 @@ class CostsView(ctk.CTkFrame):
             inputs_box,
             [
                 ("id", "ID", 50),
-                ("nome", "Insumo", 170),
-                ("unidade_uso", "Unid.", 60),
-                ("custo_por_unidade_uso", "Custo/unid.", 95),
-                ("uso_minimo_por_pedido", "Mín. ref.", 80),
+                ("nome", "Matéria-prima", 170),
+                ("unidade_uso", "Unid. base", 80),
+                ("custo_por_unidade_uso", "Custo base", 95),
+                ("uso_minimo_por_pedido", "Uso ref.", 80),
             ],
             height=12,
         )
@@ -116,10 +116,10 @@ class CostsView(ctk.CTkFrame):
             recipe_box,
             [
                 ("id", "ID", 50),
-                ("insumo_nome", "Insumo", 160),
+                ("insumo_nome", "Matéria-prima", 150),
                 ("quantidade_usada", "Qtd usada", 85),
                 ("unidade_uso", "Unid.", 55),
-                ("custo_por_unidade_uso", "Custo/unid.", 90),
+                ("custo_por_unidade_uso", "Custo base", 90),
                 ("custo_item", "Custo item", 95),
             ],
             height=13,
@@ -155,33 +155,34 @@ class CostsView(ctk.CTkFrame):
         item = get_input(self.selected_input_id)
         if not item:
             return
-        self.selected_input_minimum = float(item["uso_minimo_por_pedido"] or 0)
+        self.selected_input_reference = float(item["uso_minimo_por_pedido"] or 0)
         self.quantidade_usada_var.set("")
         self.input_status_var.set(
-            f"Insumo selecionado: {item['nome']}. Custo por {item['unidade_uso']}: "
-            f"{brl(item['custo_por_unidade_uso'])}. Informe o uso real desta variação. "
-            f"Mínimo ref.: {self._num(item['uso_minimo_por_pedido'])} {item['unidade_uso']}."
+            f"{item['nome']} | Custo por {item['unidade_uso']}: {brl(item['custo_por_unidade_uso'])}. "
+            f"Informe quanto esta variação usa. Ex.: 25 {item['unidade_uso']} de acrílico, "
+            f"20 {item['unidade_uso']} de adesivo ou 1 {item['unidade_uso']} de fita. "
+            f"Uso ref.: {self._num(item['uso_minimo_por_pedido'])} {item['unidade_uso']}."
         )
 
-    def use_minimum_reference(self) -> None:
+    def use_reference(self) -> None:
         if self.selected_input_id is None:
-            messagebox.showwarning("Atenção", "Selecione um insumo primeiro.")
+            messagebox.showwarning("Atenção", "Selecione uma matéria-prima primeiro.")
             return
-        if self.selected_input_minimum <= 0:
-            messagebox.showwarning("Atenção", "Esse insumo não tem mínimo de referência válido.")
+        if self.selected_input_reference <= 0:
+            messagebox.showwarning("Atenção", "Essa matéria-prima não tem uso de referência preenchido.")
             return
-        self.quantidade_usada_var.set(self._num(self.selected_input_minimum))
+        self.quantidade_usada_var.set(self._num(self.selected_input_reference))
 
     def add_input_to_recipe(self) -> None:
         if self.selected_variation_id is None:
             messagebox.showwarning("Atenção", "Selecione uma variação primeiro.")
             return
         if self.selected_input_id is None:
-            messagebox.showwarning("Atenção", "Selecione um insumo primeiro.")
+            messagebox.showwarning("Atenção", "Selecione uma matéria-prima primeiro.")
             return
         quantidade = money_to_float(self.quantidade_usada_var.get())
         if quantidade <= 0:
-            messagebox.showwarning("Atenção", "Informe quanto desse insumo é usado nessa variação. Ex.: se usa 25 peças de acrílico, informe 25.")
+            messagebox.showwarning("Atenção", "Informe quanto dessa matéria-prima é usado nessa variação. Ex.: medalha usa 25 cm² de acrílico.")
             return
         add_or_update_recipe_item(self.selected_variation_id, self.selected_input_id, quantidade)
         self.quantidade_usada_var.set("")
@@ -256,4 +257,7 @@ class CostsView(ctk.CTkFrame):
         self.refresh_recipe()
 
     def _num(self, value) -> str:
-        return f"{float(value or 0):.4f}".rstrip("0").rstrip(".").replace(".", ",")
+        value = float(value or 0)
+        if value == 0:
+            return ""
+        return f"{value:.4f}".rstrip("0").rstrip(".").replace(".", ",")
