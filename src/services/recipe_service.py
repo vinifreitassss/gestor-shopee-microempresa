@@ -39,16 +39,8 @@ def list_recipe_items(variacao_id: int) -> list[dict]:
             i.quantidade_total_uso,
             i.uso_minimo_por_pedido,
             fti.quantidade_usada,
-            CASE
-                WHEN i.quantidade_total_uso > 0
-                THEN i.custo_compra / i.quantidade_total_uso
-                ELSE 0
-            END AS custo_por_unidade_uso,
-            CASE
-                WHEN i.quantidade_total_uso > 0
-                THEN (i.custo_compra / i.quantidade_total_uso) * fti.quantidade_usada
-                ELSE 0
-            END AS custo_item
+            i.custo_compra AS custo_por_unidade_uso,
+            i.custo_compra * fti.quantidade_usada AS custo_item
         FROM ficha_tecnica_insumos fti
         JOIN insumos i ON i.id = fti.insumo_id
         WHERE fti.variacao_id = ? AND i.ativo = 1
@@ -62,13 +54,7 @@ def list_recipe_items(variacao_id: int) -> list[dict]:
 def calculate_recipe_cost(variacao_id: int) -> float:
     row = fetch_one(
         """
-        SELECT COALESCE(SUM(
-            CASE
-                WHEN i.quantidade_total_uso > 0
-                THEN (i.custo_compra / i.quantidade_total_uso) * fti.quantidade_usada
-                ELSE 0
-            END
-        ), 0) AS custo_total
+        SELECT COALESCE(SUM(i.custo_compra * fti.quantidade_usada), 0) AS custo_total
         FROM ficha_tecnica_insumos fti
         JOIN insumos i ON i.id = fti.insumo_id
         WHERE fti.variacao_id = ? AND i.ativo = 1
