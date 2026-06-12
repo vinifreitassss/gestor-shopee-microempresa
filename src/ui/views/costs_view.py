@@ -3,7 +3,11 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from src.services.inputs_service import get_input, list_inputs
-from src.services.products_service import list_variations, save_variation_cost
+from src.services.products_service import (
+    list_variations,
+    remove_current_variation_cost,
+    save_variation_cost,
+)
 from src.services.recipe_service import (
     add_or_update_recipe_item,
     apply_recipe_cost_to_variation,
@@ -42,6 +46,7 @@ class CostsView(ctk.CTkFrame):
         ctk.CTkLabel(manual_box, text="Custo manual da variação selecionada:").pack(side="left", padx=8, pady=8)
         ctk.CTkEntry(manual_box, textvariable=self.cost_var, width=120, placeholder_text="Ex: 12,50").pack(side="left", padx=8, pady=8)
         ctk.CTkButton(manual_box, text="Salvar custo manual", command=self.save_manual_cost).pack(side="left", padx=8, pady=8)
+        ctk.CTkButton(manual_box, text="Remover custo atual", command=self.remove_active_cost).pack(side="left", padx=8, pady=8)
         ctk.CTkLabel(manual_box, textvariable=self.status_var, text_color="gray").pack(side="left", padx=16, pady=8)
 
         content = ctk.CTkFrame(self)
@@ -138,6 +143,25 @@ class CostsView(ctk.CTkFrame):
         self.cost_var.set("")
         self.refresh()
         messagebox.showinfo("Custo salvo", "Custo manual atualizado com sucesso.")
+
+    def remove_active_cost(self) -> None:
+        if self.selected_variation_id is None:
+            messagebox.showwarning("Atenção", "Selecione uma variação na tabela.")
+            return
+        ok = messagebox.askyesno(
+            "Remover custo atual",
+            "Remover o custo atual desta variação?\n\n"
+            "As vendas ainda não fechadas voltarão para lucro incompleto até um novo custo ser aplicado.",
+        )
+        if not ok:
+            return
+        removed = remove_current_variation_cost(self.selected_variation_id)
+        if not removed:
+            messagebox.showinfo("Sem custo", "Essa variação não possui custo ativo para remover.")
+            return
+        self.refresh()
+        self.refresh_recipe()
+        messagebox.showinfo("Custo removido", "Custo ativo removido. Vendas abertas voltaram para lucro incompleto.")
 
     def load_variation(self, _event=None) -> None:
         selected = self.variations_table.selected_values()
