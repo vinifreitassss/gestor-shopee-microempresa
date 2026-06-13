@@ -207,6 +207,88 @@ def init_database() -> None:
                 criado_em TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS shopee_pedidos_financeiros (
+                pedido_id TEXT PRIMARY KEY,
+                importacao_id INTEGER,
+                status_pedido TEXT DEFAULT '',
+                data_criacao TEXT,
+                data_pagamento TEXT,
+                data_prevista_envio TEXT,
+                data_envio_real TEXT,
+                valor_total REAL NOT NULL DEFAULT 0,
+                total_global REAL NOT NULL DEFAULT 0,
+                taxa_transacao REAL NOT NULL DEFAULT 0,
+                comissao_bruta REAL NOT NULL DEFAULT 0,
+                comissao_liquida REAL NOT NULL DEFAULT 0,
+                taxa_servico_bruta REAL NOT NULL DEFAULT 0,
+                taxa_servico_liquida REAL NOT NULL DEFAULT 0,
+                valor_liquido_estimado REAL NOT NULL DEFAULT 0,
+                valor_pago_real REAL NOT NULL DEFAULT 0,
+                data_liberacao_shopee TEXT,
+                diferenca REAL NOT NULL DEFAULT 0,
+                status_financeiro TEXT NOT NULL DEFAULT 'em_espera',
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL,
+                FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS shopee_itens_pedido (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id TEXT NOT NULL,
+                importacao_id INTEGER,
+                produto_nome TEXT NOT NULL,
+                sku TEXT DEFAULT '',
+                variacao_nome TEXT DEFAULT '',
+                quantidade INTEGER NOT NULL DEFAULT 0,
+                subtotal_produto REAL NOT NULL DEFAULT 0,
+                criado_em TEXT NOT NULL,
+                FOREIGN KEY (pedido_id) REFERENCES shopee_pedidos_financeiros(pedido_id) ON DELETE CASCADE,
+                FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS shopee_transacoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                importacao_id INTEGER,
+                data_movimento TEXT NOT NULL,
+                tipo_transacao TEXT NOT NULL,
+                descricao TEXT DEFAULT '',
+                pedido_id TEXT,
+                direcao TEXT DEFAULT '',
+                valor REAL NOT NULL DEFAULT 0,
+                status TEXT DEFAULT '',
+                balanca_apos_transacoes REAL NOT NULL DEFAULT 0,
+                valor_ajustado REAL NOT NULL DEFAULT 0,
+                status_conciliacao TEXT NOT NULL DEFAULT 'pendente',
+                criado_em TEXT NOT NULL,
+                UNIQUE (data_movimento, tipo_transacao, descricao, pedido_id, direcao, valor),
+                FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS shopee_saques (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transacao_id INTEGER,
+                importacao_id INTEGER,
+                data_saque TEXT NOT NULL,
+                valor REAL NOT NULL DEFAULT 0,
+                saldo_apos_transacao REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'a_conciliar',
+                criado_em TEXT NOT NULL,
+                UNIQUE (data_saque, valor, saldo_apos_transacao),
+                FOREIGN KEY (transacao_id) REFERENCES shopee_transacoes(id) ON DELETE SET NULL,
+                FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_status
+                ON shopee_pedidos_financeiros(status_financeiro);
+            CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_envio
+                ON shopee_pedidos_financeiros(data_envio_real);
+            CREATE INDEX IF NOT EXISTS idx_shopee_transacoes_pedido
+                ON shopee_transacoes(pedido_id);
+            CREATE INDEX IF NOT EXISTS idx_shopee_transacoes_data
+                ON shopee_transacoes(data_movimento);
+            CREATE INDEX IF NOT EXISTS idx_shopee_saques_data
+                ON shopee_saques(data_saque);
+
             CREATE TABLE IF NOT EXISTS fechamentos_mensais (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mes_referencia TEXT UNIQUE NOT NULL,
@@ -225,6 +307,7 @@ def init_database() -> None:
             """
         )
 
+        _ensure_column(conn, "importacoes", "tipo_relatorio", "TEXT NOT NULL DEFAULT 'performance'")
         _ensure_column(conn, "insumos", "valor_total_estoque", "REAL NOT NULL DEFAULT 0")
         _ensure_column(conn, "insumos", "referencia_uso_custo", "TEXT DEFAULT ''")
 
