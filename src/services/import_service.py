@@ -15,7 +15,7 @@ def save_importation(
     data_fim: date,
     mode: str = "perguntar",
 ) -> int:
-    """Importa e salva a planilha.
+    """Importa e salva a planilha de desempenho/vendas da Shopee.
 
     mode aceita:
     - substituir: apaga importações confirmadas no mesmo período antes de salvar;
@@ -31,7 +31,11 @@ def save_importation(
             existing = conn.execute(
                 """
                 SELECT id FROM importacoes
-                WHERE tipo_periodo = ? AND data_inicio = ? AND data_fim = ? AND status = 'confirmada'
+                WHERE tipo_relatorio = 'performance'
+                  AND tipo_periodo = ?
+                  AND data_inicio = ?
+                  AND data_fim = ?
+                  AND status = 'confirmada'
                 """,
                 (tipo_periodo, data_inicio.isoformat(), data_fim.isoformat()),
             ).fetchall()
@@ -41,9 +45,9 @@ def save_importation(
         cursor = conn.execute(
             """
             INSERT INTO importacoes (
-                arquivo_nome, caminho_arquivo, tipo_periodo, data_inicio, data_fim,
+                arquivo_nome, caminho_arquivo, tipo_relatorio, tipo_periodo, data_inicio, data_fim,
                 mes_referencia, status, criado_em
-            ) VALUES (?, ?, ?, ?, ?, ?, 'confirmada', ?)
+            ) VALUES (?, ?, 'performance', ?, ?, ?, ?, 'confirmada', ?)
             """,
             (
                 path.name,
@@ -91,6 +95,7 @@ def list_importations() -> list[dict]:
         SELECT
             id,
             arquivo_nome,
+            tipo_relatorio,
             tipo_periodo,
             data_inicio,
             data_fim,
@@ -111,6 +116,7 @@ def get_importation(importacao_id: int) -> dict | None:
             SELECT
                 id,
                 arquivo_nome,
+                tipo_relatorio,
                 tipo_periodo,
                 data_inicio,
                 data_fim,
@@ -134,15 +140,16 @@ def delete_importation(importacao_id: int) -> bool:
 
     As tabelas linhas_importadas e vendas_contabilizadas usam ON DELETE CASCADE,
     então apagar a importação remove a apuração gerada por aquela planilha.
-    Produtos, variações e custos cadastrados são mantidos.
+    Produtos, variações, custos e insumos cadastrados serão mantidos.
     """
     with get_connection() as conn:
         current = conn.execute(
-            "SELECT id FROM importacoes WHERE id = ?",
+            "SELECT id, tipo_relatorio FROM importacoes WHERE id = ?",
             (importacao_id,),
         ).fetchone()
         if not current:
             return False
+
         conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
         return True
 
@@ -284,7 +291,11 @@ def find_importations_same_period(tipo_periodo: str, data_inicio: date, data_fim
     return fetch_all(
         """
         SELECT * FROM importacoes
-        WHERE tipo_periodo = ? AND data_inicio = ? AND data_fim = ? AND status = 'confirmada'
+        WHERE tipo_relatorio = 'performance'
+          AND tipo_periodo = ?
+          AND data_inicio = ?
+          AND data_fim = ?
+          AND status = 'confirmada'
         ORDER BY criado_em DESC
         """,
         (tipo_periodo, data_inicio.isoformat(), data_fim.isoformat()),
