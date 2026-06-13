@@ -5,10 +5,13 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from src.importer import ShopeeImportError, ShopeeImporter
+from src.services.financial_import_service import (
+    find_financial_importations_same_period,
+    preview_financial_importation,
+    save_financial_importation,
+)
 from src.services.import_service import (
-    delete_importation,
     find_importations_same_period,
-    get_importation,
     list_importations,
     save_importation,
 )
@@ -17,11 +20,19 @@ from src.ui.theme import PAD
 from src.utils import brl
 
 
+REPORT_OPTIONS = {
+    "Vendas / desempenho": "performance",
+    "Pedidos enviados": "pedidos_enviados",
+    "Pagamentos / saques Shopee": "pagamentos_shopee",
+}
+
+
 class ImportView(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master)
         yesterday = date.today() - timedelta(days=1)
         self.file_path_var = ctk.StringVar(value="")
+        self.report_label_var = ctk.StringVar(value="Vendas / desempenho")
         self.tipo_var = ctk.StringVar(value="diario")
         self.data_inicio_var = ctk.StringVar(value=yesterday.isoformat())
         self.data_fim_var = ctk.StringVar(value=yesterday.isoformat())
@@ -36,49 +47,46 @@ class ImportView(ctk.CTkFrame):
         box.pack(fill="x", padx=PAD, pady=(0, PAD))
 
         ctk.CTkButton(box, text="Escolher planilha", command=self.choose_file).grid(row=0, column=0, padx=8, pady=8)
-        ctk.CTkEntry(box, textvariable=self.file_path_var, width=520).grid(row=0, column=1, columnspan=4, padx=8, pady=8, sticky="ew")
+        ctk.CTkEntry(box, textvariable=self.file_path_var, width=520).grid(row=0, column=1, columnspan=5, padx=8, pady=8, sticky="ew")
 
-        ctk.CTkLabel(box, text="Tipo:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
-        ctk.CTkOptionMenu(box, variable=self.tipo_var, values=["diario", "mensal", "personalizado"]).grid(row=1, column=1, padx=8, pady=8, sticky="w")
-        ctk.CTkLabel(box, text="Data início:").grid(row=1, column=2, padx=8, pady=8, sticky="e")
-        ctk.CTkEntry(box, textvariable=self.data_inicio_var, width=120).grid(row=1, column=3, padx=8, pady=8)
-        ctk.CTkLabel(box, text="Data fim:").grid(row=1, column=4, padx=8, pady=8, sticky="e")
-        ctk.CTkEntry(box, textvariable=self.data_fim_var, width=120).grid(row=1, column=5, padx=8, pady=8)
+        ctk.CTkLabel(box, text="Relatório:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
+        ctk.CTkOptionMenu(box, variable=self.report_label_var, values=list(REPORT_OPTIONS.keys())).grid(row=1, column=1, padx=8, pady=8, sticky="w")
+
+        ctk.CTkLabel(box, text="Tipo:").grid(row=1, column=2, padx=8, pady=8, sticky="e")
+        ctk.CTkOptionMenu(box, variable=self.tipo_var, values=["diario", "mensal", "personalizado"]).grid(row=1, column=3, padx=8, pady=8, sticky="w")
+
+        ctk.CTkLabel(box, text="Data início:").grid(row=1, column=4, padx=8, pady=8, sticky="e")
+        ctk.CTkEntry(box, textvariable=self.data_inicio_var, width=120).grid(row=1, column=5, padx=8, pady=8)
+        ctk.CTkLabel(box, text="Data fim/envio:").grid(row=1, column=6, padx=8, pady=8, sticky="e")
+        ctk.CTkEntry(box, textvariable=self.data_fim_var, width=120).grid(row=1, column=7, padx=8, pady=8)
 
         ctk.CTkButton(box, text="Pré-visualizar", command=self.preview).grid(row=2, column=0, padx=8, pady=8)
         ctk.CTkButton(box, text="Confirmar importação", command=self.confirm_import).grid(row=2, column=1, padx=8, pady=8, sticky="w")
-        ctk.CTkLabel(box, textvariable=self.status_var).grid(row=2, column=2, columnspan=4, padx=8, pady=8, sticky="w")
+        ctk.CTkLabel(box, textvariable=self.status_var).grid(row=2, column=2, columnspan=6, padx=8, pady=8, sticky="w")
         box.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(self, text="Prévia das variações vendidas", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+        ctk.CTkLabel(self, text="Prévia da planilha", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
         self.preview_table = SimpleTable(
             self,
             [
-                ("produto_nome", "Produto pai", 320),
-                ("variacao_nome", "Variação", 260),
-                ("unidades", "Unidades", 90),
-                ("faturamento", "Faturamento", 130),
-                ("tipo_linha", "Tipo", 110),
-                ("contabilizar", "Conta?", 80),
+                ("pedido_id", "Pedido / Produto", 180),
+                ("status", "Status", 160),
+                ("data", "Data", 140),
+                ("valor", "Valor bruto", 130),
+                ("liquido", "Líquido / saldo", 130),
+                ("obs", "Obs.", 190),
             ],
             height=9,
         )
         self.preview_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
 
-        history_header = ctk.CTkFrame(self)
-        history_header.pack(fill="x", padx=PAD, pady=(0, 4))
-        ctk.CTkLabel(history_header, text="Importações recentes", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
-        ctk.CTkButton(
-            history_header,
-            text="Excluir importação selecionada",
-            command=self.delete_selected_importation,
-        ).pack(side="right", padx=8)
-
+        ctk.CTkLabel(self, text="Importações recentes", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
         self.history_table = SimpleTable(
             self,
             [
                 ("id", "ID", 60),
-                ("arquivo_nome", "Arquivo", 260),
+                ("arquivo_nome", "Arquivo", 240),
+                ("tipo_relatorio", "Relatório", 150),
                 ("tipo_periodo", "Tipo", 100),
                 ("data_inicio", "Início", 100),
                 ("data_fim", "Fim", 100),
@@ -99,31 +107,64 @@ class ImportView(ctk.CTkFrame):
             self.file_path_var.set(path)
             self.status_var.set(f"Selecionado: {Path(path).name}")
 
+    def _report_type(self) -> str:
+        return REPORT_OPTIONS[self.report_label_var.get()]
+
     def preview(self) -> None:
         path = self.file_path_var.get().strip()
         if not path:
             messagebox.showwarning("Atenção", "Escolha uma planilha primeiro.")
             return
+
+        report_type = self._report_type()
         try:
-            self.preview_lines = ShopeeImporter().preview(path)
-            rows = []
-            for line in self.preview_lines:
-                if not line.contabilizar:
-                    continue
-                rows.append(
-                    {
-                        "produto_nome": line.produto_nome,
-                        "variacao_nome": line.variacao_nome,
-                        "unidades": line.unidades_pedido_pago,
-                        "faturamento": brl(line.vendas_pedido_pago),
-                        "tipo_linha": line.tipo_linha,
-                        "contabilizar": "Sim" if line.contabilizar else "Não",
-                    }
-                )
-            self.preview_table.set_rows(rows)
-            self.status_var.set(f"{len(rows)} variações vendidas encontradas.")
+            if report_type == "performance":
+                self._preview_performance(path)
+            else:
+                data_fim = date.fromisoformat(self.data_fim_var.get().strip())
+                self._preview_financial(path, report_type, data_fim)
         except ShopeeImportError as exc:
             messagebox.showerror("Erro ao ler planilha", str(exc))
+        except ValueError:
+            messagebox.showerror("Data inválida", "Use o formato AAAA-MM-DD, exemplo: 2026-06-11.")
+
+    def _preview_performance(self, path: str) -> None:
+        self.preview_lines = ShopeeImporter().preview(path)
+        rows = []
+        for line in self.preview_lines:
+            if not line.contabilizar:
+                continue
+            rows.append(
+                {
+                    "pedido_id": line.produto_nome,
+                    "status": line.variacao_nome,
+                    "data": "",
+                    "valor": brl(line.vendas_pedido_pago),
+                    "liquido": "",
+                    "obs": f"{line.unidades_pedido_pago} un.",
+                }
+            )
+        self.preview_table.set_rows(rows)
+        self.status_var.set(f"{len(rows)} variações vendidas encontradas.")
+
+    def _preview_financial(self, path: str, report_type: str, data_envio_real: date) -> None:
+        preview = preview_financial_importation(path, report_type, data_envio_real=data_envio_real)
+        rows = []
+        for row in preview["rows"]:
+            rows.append({**row, "valor": brl(row.get("valor")), "liquido": brl(row.get("liquido"))})
+        self.preview_table.set_rows(rows)
+        if report_type == "pedidos_enviados":
+            self.status_var.set(
+                f"{preview['count']} pedidos únicos. "
+                f"Bruto: {brl(preview['valor_total'])}. "
+                f"Líquido estimado: {brl(preview['valor_liquido'])}."
+            )
+        else:
+            self.status_var.set(
+                f"{preview['count']} transações. "
+                f"Entradas: {brl(preview['valor_total'])}. "
+                f"Saques: {brl(preview['taxas'])}."
+            )
 
     def confirm_import(self) -> None:
         path = self.file_path_var.get().strip()
@@ -138,58 +179,32 @@ class ImportView(ctk.CTkFrame):
             return
 
         tipo = self.tipo_var.get().strip()
-        duplicates = find_importations_same_period(tipo, data_inicio, data_fim)
+        report_type = self._report_type()
+        if report_type == "performance":
+            duplicates = find_importations_same_period(tipo, data_inicio, data_fim)
+        else:
+            duplicates = find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
+
         mode = "somar"
         if duplicates:
             replace = messagebox.askyesno(
                 "Importação já existe",
-                "Já existe importação confirmada para esse período.\n\nSim = substituir anterior\nNão = cancelar",
+                "Já existe importação confirmada para esse tipo de relatório e período.\n\n"
+                "Sim = substituir anterior\nNão = cancelar",
             )
             if not replace:
                 return
             mode = "substituir"
 
         try:
-            import_id = save_importation(path, tipo, data_inicio, data_fim, mode=mode)
+            if report_type == "performance":
+                import_id = save_importation(path, tipo, data_inicio, data_fim, mode=mode)
+            else:
+                import_id = save_financial_importation(path, report_type, tipo, data_inicio, data_fim, mode=mode)
             messagebox.showinfo("Importação concluída", f"Importação salva com ID {import_id}.")
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Erro", f"Não foi possível importar:\n{exc}")
-
-    def delete_selected_importation(self) -> None:
-        selected = self.history_table.selected_values()
-        if not selected:
-            messagebox.showwarning("Atenção", "Selecione uma importação na tabela de histórico.")
-            return
-        import_id = int(selected[0])
-        item = get_importation(import_id)
-        if not item:
-            messagebox.showinfo("Importação não encontrada", "Essa importação já não existe.")
-            self.refresh()
-            return
-
-        ok = messagebox.askyesno(
-            "Excluir importação",
-            "Deseja excluir esta planilha importada?\n\n"
-            f"Arquivo: {item['arquivo_nome']}\n"
-            f"Período: {item['data_inicio']} até {item['data_fim']}\n"
-            f"Mês: {item['mes_referencia']}\n"
-            f"Vendas/apurações vinculadas: {item['vendas_contabilizadas']}\n\n"
-            "Isso remove a apuração dessa planilha do Dashboard, DRE e Resultado Operacional.\n"
-            "Produtos, variações, custos e insumos cadastrados serão mantidos.",
-        )
-        if not ok:
-            return
-
-        deleted = delete_importation(import_id)
-        if not deleted:
-            messagebox.showinfo("Importação não encontrada", "Essa importação já foi removida.")
-            self.refresh()
-            return
-
-        self.status_var.set(f"Importação ID {import_id} excluída.")
-        self.refresh()
-        messagebox.showinfo("Importação excluída", "Planilha importada removida com sucesso.")
 
     def refresh(self) -> None:
         rows = list_importations()
