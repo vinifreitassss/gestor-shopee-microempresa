@@ -37,6 +37,7 @@ def get_dre(mes_referencia: str) -> dict:
         SELECT COALESCE(SUM(valor), 0) AS despesas
         FROM despesas
         WHERE mes_referencia = ?
+          AND COALESCE(incide_dre, 1) = 1
         """,
         (mes_referencia,),
     ) or {"despesas": 0}
@@ -102,6 +103,23 @@ def get_expenses_by_category(mes_referencia: str) -> list[dict]:
             COALESCE(SUM(valor), 0) AS valor
         FROM despesas
         WHERE mes_referencia = ?
+          AND COALESCE(incide_dre, 1) = 1
+        GROUP BY categoria
+        ORDER BY valor DESC
+        """,
+        (mes_referencia,),
+    )
+
+
+def get_cash_only_expenses_by_category(mes_referencia: str) -> list[dict]:
+    return fetch_all(
+        """
+        SELECT
+            categoria,
+            COALESCE(SUM(valor), 0) AS valor
+        FROM despesas
+        WHERE mes_referencia = ?
+          AND COALESCE(incide_dre, 1) = 0
         GROUP BY categoria
         ORDER BY valor DESC
         """,
