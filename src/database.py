@@ -211,6 +211,7 @@ def init_database() -> None:
                 pedido_id TEXT PRIMARY KEY,
                 importacao_id INTEGER,
                 status_pedido TEXT DEFAULT '',
+                numero_rastreio TEXT DEFAULT '',
                 data_criacao TEXT,
                 data_pagamento TEXT,
                 data_prevista_envio TEXT,
@@ -226,7 +227,7 @@ def init_database() -> None:
                 valor_pago_real REAL NOT NULL DEFAULT 0,
                 data_liberacao_shopee TEXT,
                 diferenca REAL NOT NULL DEFAULT 0,
-                status_financeiro TEXT NOT NULL DEFAULT 'em_espera',
+                status_financeiro TEXT NOT NULL DEFAULT 'em_aberto',
                 criado_em TEXT NOT NULL,
                 atualizado_em TEXT NOT NULL,
                 FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
@@ -323,6 +324,7 @@ def init_database() -> None:
         _ensure_column(conn, "importacoes", "tipo_relatorio", "TEXT NOT NULL DEFAULT 'performance'")
         _ensure_column(conn, "insumos", "valor_total_estoque", "REAL NOT NULL DEFAULT 0")
         _ensure_column(conn, "insumos", "referencia_uso_custo", "TEXT DEFAULT ''")
+        _ensure_column(conn, "shopee_pedidos_financeiros", "numero_rastreio", "TEXT DEFAULT ''")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
