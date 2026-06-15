@@ -117,7 +117,7 @@ class ImportView(ctk.CTkFrame):
         rows = [{**row, "valor": brl(row.get("valor")), "liquido": brl(row.get("liquido"))} for row in preview["rows"]]
         self.preview_table.set_rows(rows)
         if report_type == "pedidos_enviados":
-            self.status_var.set(f"{preview['count']} pedidos únicos. Com rastreio: {preview.get('pedidos_com_rastreio', 0)}. Sem rastreio: {preview.get('pedidos_sem_rastreio', 0)}. Aberto futuro: {brl(preview['valor_total'])}. Entra em espera: {brl(preview['valor_liquido'])}.")
+            self.status_var.set(f"{preview['count']} pedidos únicos. Com rastreio: {preview.get('pedidos_com_rastreio', 0)}. Sem rastreio: {preview.get('pedidos_sem_rastreio', 0)}. Aberto futuro líquido: {brl(preview.get('saldo_possivel_aberto', 0))}. Entra em espera: {brl(preview['valor_liquido'])}.")
         else:
             self.status_var.set(f"{preview['count']} transações. Entradas: {brl(preview['valor_total'])}. Saques: {brl(preview['taxas'])}.")
 
