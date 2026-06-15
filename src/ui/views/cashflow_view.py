@@ -55,11 +55,7 @@ class CashFlowView(ctk.CTkFrame):
 
         self.info_label = ctk.CTkLabel(
             self,
-            text=(
-                "Regra mestre: pedido enviado aumenta Shopee em espera; "
-                "pagamento Shopee reduz espera e aumenta Caixa Shopee; "
-                "saque reduz Caixa Shopee e aumenta Banco."
-            ),
+            text="Pedidos sem rastreio ficam como aberto futuro; pedidos com rastreio entram em Shopee em espera.",
             text_color="gray",
         )
         self.info_label.pack(anchor="w", padx=PAD, pady=(0, 6))
@@ -99,6 +95,8 @@ class CashFlowView(ctk.CTkFrame):
             ("saldo_banco", "Banco"),
             ("saldo_shopee_disponivel", "Caixa Shopee"),
             ("saldo_shopee_espera", "Shopee em espera"),
+            ("saldo_possivel_aberto", "Aberto futuro"),
+            ("pedidos_em_aberto", "Pedidos sem rastreio"),
             ("caixa_disponivel", "Caixa disponível"),
             ("caixa_livre_estimado", "Caixa livre estimado"),
             ("saques", "Transferido no mês"),
@@ -110,8 +108,8 @@ class CashFlowView(ctk.CTkFrame):
 
         for idx, (key, title) in enumerate(metric_defs):
             card = MetricCard(metrics, title)
-            card.grid(row=idx // 5, column=idx % 5, sticky="ew", padx=6, pady=6)
-            metrics.grid_columnconfigure(idx % 5, weight=1)
+            card.grid(row=idx // 4, column=idx % 4, sticky="ew", padx=6, pady=6)
+            metrics.grid_columnconfigure(idx % 4, weight=1)
             self.cards[key] = card
 
     def _load_initial_position(self) -> None:
@@ -163,6 +161,7 @@ class CashFlowView(ctk.CTkFrame):
             "saldo_banco",
             "saldo_shopee_disponivel",
             "saldo_shopee_espera",
+            "saldo_possivel_aberto",
             "caixa_disponivel",
             "caixa_livre_estimado",
             "saques",
