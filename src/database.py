@@ -191,6 +191,7 @@ def init_database() -> None:
                 categoria TEXT NOT NULL,
                 descricao TEXT NOT NULL,
                 valor REAL NOT NULL,
+                incide_dre INTEGER NOT NULL DEFAULT 1,
                 recorrente_id INTEGER,
                 criado_em TEXT NOT NULL,
                 FOREIGN KEY (recorrente_id) REFERENCES despesas_recorrentes(id)
@@ -202,6 +203,7 @@ def init_database() -> None:
                 descricao TEXT NOT NULL,
                 valor_padrao REAL NOT NULL,
                 dia_vencimento INTEGER NOT NULL DEFAULT 1,
+                incide_dre INTEGER NOT NULL DEFAULT 1,
                 frequencia TEXT NOT NULL DEFAULT 'mensal',
                 ativo INTEGER NOT NULL DEFAULT 1,
                 criado_em TEXT NOT NULL
@@ -325,6 +327,8 @@ def init_database() -> None:
         _ensure_column(conn, "insumos", "valor_total_estoque", "REAL NOT NULL DEFAULT 0")
         _ensure_column(conn, "insumos", "referencia_uso_custo", "TEXT DEFAULT ''")
         _ensure_column(conn, "shopee_pedidos_financeiros", "numero_rastreio", "TEXT DEFAULT ''")
+        _ensure_column(conn, "despesas", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "despesas_recorrentes", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
