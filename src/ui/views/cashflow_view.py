@@ -7,10 +7,12 @@ from src.database import init_database
 from src.services.cashflow_service import (
     get_cashflow_summary,
     get_initial_position,
+    list_cashflow_events,
+    list_shopee_pipeline,
     save_initial_position,
 )
 from src.services.reports_service import current_month_reference
-from src.ui.components import MetricCard
+from src.ui.components import MetricCard, SimpleTable
 from src.ui.theme import PAD
 from src.utils import brl, money_to_float, percent
 
@@ -25,6 +27,7 @@ class CashFlowView(ctk.CTkFrame):
         self.shopee_cash_var = ctk.StringVar(value="0")
         self.shopee_waiting_var = ctk.StringVar(value="0")
         self.cards = {}
+        self.flow_values = {}
         self.status_var = ctk.StringVar(value="")
         self._build()
         self._ensure_database_ready()
@@ -52,10 +55,12 @@ class CashFlowView(ctk.CTkFrame):
 
         self._build_initial_position_box()
         self._build_metric_cards()
+        self._build_flow_diagram()
+        self._build_report_tables()
 
         self.info_label = ctk.CTkLabel(
             self,
-            text="Pedidos sem rastreio ficam como aberto futuro; pedidos com rastreio entram em Shopee em espera.",
+            text="Pedido sem rastreio fica em aberto futuro; pedido com rastreio entra em Shopee em espera; pagamento libera para Caixa Shopee; saque move para Banco.",
             text_color="gray",
         )
         self.info_label.pack(anchor="w", padx=PAD, pady=(0, 6))
@@ -112,6 +117,65 @@ class CashFlowView(ctk.CTkFrame):
             metrics.grid_columnconfigure(idx % 4, weight=1)
             self.cards[key] = card
 
+    def _build_flow_diagram(self) -> None:
+        ctk.CTkLabel(self, text="Gráfico do fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+        flow = ctk.CTkFrame(self)
+        flow.pack(fill="x", padx=PAD, pady=(6, PAD))
+
+        steps = [
+            ("saldo_possivel_aberto", "Aberto futuro"),
+            ("saldo_shopee_espera", "Shopee em espera"),
+            ("saldo_shopee_disponivel", "Caixa Shopee"),
+            ("saldo_banco", "Banco"),
+        ]
+
+        col = 0
+        for key, title in steps:
+            node = ctk.CTkFrame(flow)
+            node.grid(row=0, column=col, sticky="ew", padx=4, pady=8)
+            flow.grid_columnconfigure(col, weight=1)
+            ctk.CTkLabel(node, text=title, font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="center", padx=8, pady=(8, 2))
+            value_label = ctk.CTkLabel(node, text="-", font=ctk.CTkFont(size=18, weight="bold"))
+            value_label.pack(anchor="center", padx=8, pady=(0, 8))
+            self.flow_values[key] = value_label
+            col += 1
+            if col < 7:
+                ctk.CTkLabel(flow, text="→", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=col, padx=2)
+                col += 1
+
+    def _build_report_tables(self) -> None:
+        ctk.CTkLabel(self, text="Relatório do fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+
+        self.pipeline_table = SimpleTable(
+            self,
+            [
+                ("pedido_id", "Pedido", 150),
+                ("numero_rastreio", "Rastreio", 150),
+                ("status_financeiro", "Status", 120),
+                ("data_envio", "Data", 110),
+                ("valor_liquido_estimado", "Líquido estimado", 130),
+                ("valor_pago_real", "Pago", 110),
+                ("diferenca", "Diferença", 110),
+            ],
+            height=5,
+        )
+        self.pipeline_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
+
+        self.events_table = SimpleTable(
+            self,
+            [
+                ("data", "Data", 110),
+                ("tipo", "Tipo", 140),
+                ("referencia", "Referência", 160),
+                ("descricao", "Descrição", 260),
+                ("entrada", "Entrada", 120),
+                ("saida", "Saída", 120),
+                ("status", "Status", 120),
+            ],
+            height=5,
+        )
+        self.events_table.pack(fill="both", expand=True, padx=PAD, pady=(0, PAD))
+
     def _load_initial_position(self) -> None:
         try:
             position = get_initial_position()
@@ -150,13 +214,19 @@ class CashFlowView(ctk.CTkFrame):
             init_database()
             month = self.month_var.get().strip()
             summary = get_cashflow_summary(month)
+            pipeline = list_shopee_pipeline(month, limit=80)
+            events = list_cashflow_events(month, limit=80)
         except Exception as exc:
             self.status_var.set(f"Erro ao atualizar fluxo de caixa: {exc}")
             for card in self.cards.values():
                 card.set_value("-")
+            for label in self.flow_values.values():
+                label.configure(text="-")
+            self.pipeline_table.set_rows([])
+            self.events_table.set_rows([])
             return
 
-        self.status_var.set("")
+        self.status_var.set(f"Período calculado: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}.")
         money_fields = {
             "saldo_banco",
             "saldo_shopee_disponivel",
@@ -179,3 +249,30 @@ class CashFlowView(ctk.CTkFrame):
                 card.set_value(f"{float(value or 0):.1f} dias".replace(".", ","))
             else:
                 card.set_value(str(value or "-"))
+
+        for key, label in self.flow_values.items():
+            label.configure(text=brl(summary.get(key)))
+
+        pipeline_rows = []
+        for row in pipeline:
+            pipeline_rows.append(
+                {
+                    **row,
+                    "numero_rastreio": row.get("numero_rastreio") or "-",
+                    "valor_liquido_estimado": brl(row.get("valor_liquido_estimado")),
+                    "valor_pago_real": brl(row.get("valor_pago_real")),
+                    "diferenca": brl(row.get("diferenca")),
+                }
+            )
+        self.pipeline_table.set_rows(pipeline_rows)
+
+        event_rows = []
+        for row in events:
+            event_rows.append(
+                {
+                    **row,
+                    "entrada": brl(row.get("entrada")) if float(row.get("entrada") or 0) else "",
+                    "saida": brl(row.get("saida")) if float(row.get("saida") or 0) else "",
+                }
+            )
+        self.events_table.set_rows(event_rows)
