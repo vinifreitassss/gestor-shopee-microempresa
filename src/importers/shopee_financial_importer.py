@@ -23,6 +23,7 @@ class FinancialOrderItem:
 class FinancialOrder:
     pedido_id: str
     status_pedido: str
+    numero_rastreio: str
     data_criacao: str
     data_pagamento: str
     data_prevista_envio: str
@@ -36,6 +37,24 @@ class FinancialOrder:
     taxa_servico_liquida: float
     valor_liquido_estimado: float
     itens: list[FinancialOrderItem] = field(default_factory=list)
+
+    @property
+    def tem_rastreio(self) -> bool:
+        text = normalize_text(self.numero_rastreio)
+        return bool(text) and text not in {"nan", "none", "-", "--"}
+
+    @property
+    def esta_cancelado(self) -> bool:
+        text = normalize_text(self.status_pedido)
+        return "cancel" in text
+
+    @property
+    def status_financeiro_inicial(self) -> str:
+        if self.esta_cancelado:
+            return "cancelado"
+        if self.tem_rastreio:
+            return "em_espera"
+        return "em_aberto"
 
 
 @dataclass
@@ -63,13 +82,24 @@ class BalanceTransaction:
 class ShopeeFinancialImporter:
     """Leitor dos relatórios financeiros da Shopee.
 
-    - Pedidos enviados/a enviar: cria recebíveis em espera, deduplicados por ID do pedido.
+    - Pedidos a enviar: atualiza a lista de pedidos e valores estimados.
+    - Só pedidos com rastreio entram em Shopee em espera.
     - Relatório de pagamento: confirma entradas liberadas e saques.
     """
 
     ORDER_COLUMNS = {
         "pedido_id": ("id do pedido", "order id"),
         "status_pedido": ("status do pedido", "order status"),
+        "numero_rastreio": (
+            "numero de rastreamento",
+            "número de rastreamento",
+            "codigo de rastreio",
+            "código de rastreio",
+            "rastreamento",
+            "tracking number",
+            "tracking no",
+            "tracking code",
+        ),
         "data_prevista_envio": ("data prevista de envio", "ship by date"),
         "data_criacao": ("data de criacao do pedido", "data de criação do pedido", "order creation date"),
         "data_pagamento": ("hora do pagamento do pedido", "payment time", "data de pagamento"),
@@ -124,6 +154,9 @@ class ShopeeFinancialImporter:
                 subtotal_produto=money_to_float(self._get(row, mapping, "subtotal_produto")),
             )
 
+            numero_rastreio = self._get(row, mapping, "numero_rastreio")
+            tem_rastreio = bool(normalize_text(numero_rastreio)) and normalize_text(numero_rastreio) not in {"nan", "none", "-", "--"}
+
             if pedido_id not in orders:
                 total_global = money_to_float(self._get(row, mapping, "total_global"))
                 taxa_transacao = money_to_float(self._get(row, mapping, "taxa_transacao"))
@@ -133,10 +166,11 @@ class ShopeeFinancialImporter:
                 orders[pedido_id] = FinancialOrder(
                     pedido_id=pedido_id,
                     status_pedido=self._get(row, mapping, "status_pedido"),
+                    numero_rastreio=numero_rastreio,
                     data_criacao=self._to_iso_datetime(self._get(row, mapping, "data_criacao")),
                     data_pagamento=self._to_iso_datetime(self._get(row, mapping, "data_pagamento")),
                     data_prevista_envio=self._to_iso_datetime(self._get(row, mapping, "data_prevista_envio")),
-                    data_envio_real=data_envio_real.isoformat() if data_envio_real else "",
+                    data_envio_real=data_envio_real.isoformat() if data_envio_real and tem_rastreio else "",
                     valor_total=money_to_float(self._get(row, mapping, "valor_total")),
                     total_global=total_global,
                     taxa_transacao=taxa_transacao,
@@ -147,6 +181,9 @@ class ShopeeFinancialImporter:
                     valor_liquido_estimado=liquido,
                     itens=[],
                 )
+            elif tem_rastreio and not orders[pedido_id].tem_rastreio:
+                orders[pedido_id].numero_rastreio = numero_rastreio
+                orders[pedido_id].data_envio_real = data_envio_real.isoformat() if data_envio_real else ""
 
             if item.produto_nome:
                 orders[pedido_id].itens.append(item)
