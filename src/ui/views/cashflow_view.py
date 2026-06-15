@@ -43,7 +43,6 @@ class CashFlowView(ctk.CTkFrame):
     def _build(self) -> None:
         header = ctk.CTkFrame(self)
         header.pack(fill="x", padx=PAD, pady=PAD)
-
         ctk.CTkLabel(header, text="Fluxo de Caixa", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
         ctk.CTkLabel(header, text="Mês:").pack(side="left", padx=(24, 6))
         ctk.CTkEntry(header, textvariable=self.month_var, width=90).pack(side="left", padx=6)
@@ -53,22 +52,20 @@ class CashFlowView(ctk.CTkFrame):
         self.status_label.pack(anchor="w", padx=PAD, pady=(0, 6))
 
         self._build_initial_position_box()
-        self._build_metric_cards()
-        self._build_flow_diagram()
-        self._build_projection_table()
-        self._build_report_tables()
 
-        self.info_label = ctk.CTkLabel(
-            self,
-            text="Projeção: data prevista de envio move aberto futuro para espera; entradas Shopee aumentam disponibilidade; despesas reduzem disponibilidade e total gerencial.",
-            text_color="gray",
-        )
-        self.info_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
+        self.tabs = ctk.CTkTabview(self)
+        self.tabs.pack(fill="both", expand=True, padx=PAD, pady=(0, PAD))
+        self.summary_tab = self.tabs.add("Resumo")
+        self.daily_tab = self.tabs.add("Fluxo diário")
+        self.details_tab = self.tabs.add("Detalhes")
+
+        self._build_summary_tab(self.summary_tab)
+        self._build_daily_tab(self.daily_tab)
+        self._build_details_tab(self.details_tab)
 
     def _build_initial_position_box(self) -> None:
         box = ctk.CTkFrame(self)
         box.pack(fill="x", padx=PAD, pady=(0, PAD))
-
         ctk.CTkLabel(box, text="Posição inicial do controle", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=8, padx=8, pady=(8, 2), sticky="w")
         ctk.CTkLabel(box, text="Data de corte:").grid(row=1, column=0, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.cutoff_var, width=120).grid(row=1, column=1, padx=8, pady=8)
@@ -80,43 +77,38 @@ class CashFlowView(ctk.CTkFrame):
         ctk.CTkEntry(box, textvariable=self.shopee_waiting_var, width=110).grid(row=1, column=7, padx=8, pady=8)
         ctk.CTkButton(box, text="Salvar posição inicial", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
 
-    def _build_metric_cards(self) -> None:
-        metrics = ctk.CTkFrame(self)
-        metrics.pack(fill="x", padx=PAD, pady=(0, PAD))
-
+    def _build_summary_tab(self, parent) -> None:
+        metrics = ctk.CTkFrame(parent)
+        metrics.pack(fill="x", padx=8, pady=8)
         metric_defs = [
             ("total_dinheiro_gerencial", "Total gerencial"),
             ("disponibilidades", "Disponibilidades"),
+            ("menor_disponibilidade", "Menor disponibilidade"),
+            ("dia_critico", "Dia crítico"),
             ("saldo_banco", "Banco"),
             ("saldo_shopee_disponivel", "Caixa Shopee"),
             ("saldo_shopee_espera", "Shopee em espera"),
             ("saldo_possivel_aberto", "Aberto futuro"),
             ("pedidos_em_aberto", "Pedidos sem rastreio"),
             ("caixa_livre_estimado", "Caixa livre estimado"),
-            ("saques", "Transferido no mês"),
             ("despesas", "Despesas no mês"),
             ("imposto_reservado", "Imposto reservado"),
-            ("taxa_total_percentual", "Taxa média Shopee"),
         ]
-
         for idx, (key, title) in enumerate(metric_defs):
             card = MetricCard(metrics, title)
             card.grid(row=idx // 4, column=idx % 4, sticky="ew", padx=6, pady=6)
             metrics.grid_columnconfigure(idx % 4, weight=1)
             self.cards[key] = card
 
-    def _build_flow_diagram(self) -> None:
-        ctk.CTkLabel(self, text="Gráfico do fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
-        flow = ctk.CTkFrame(self)
-        flow.pack(fill="x", padx=PAD, pady=(6, PAD))
-
+        ctk.CTkLabel(parent, text="Esteira do dinheiro", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=8, pady=(10, 0))
+        flow = ctk.CTkFrame(parent)
+        flow.pack(fill="x", padx=8, pady=8)
         steps = [
             ("saldo_possivel_aberto", "Aberto futuro"),
             ("saldo_shopee_espera", "Shopee em espera"),
             ("saldo_shopee_disponivel", "Caixa Shopee"),
             ("saldo_banco", "Banco"),
         ]
-
         col = 0
         for key, title in steps:
             node = ctk.CTkFrame(flow)
@@ -131,27 +123,31 @@ class CashFlowView(ctk.CTkFrame):
                 ctk.CTkLabel(flow, text="→", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=col, padx=2)
                 col += 1
 
-    def _build_projection_table(self) -> None:
-        ctk.CTkLabel(self, text="Projeção diária", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+    def _build_daily_tab(self, parent) -> None:
+        ctk.CTkLabel(
+            parent,
+            text="Fluxo diário projetado: use esta tela para decidir se pode comprar mercadoria, pagar despesa ou segurar caixa.",
+            text_color="gray",
+        ).pack(anchor="w", padx=8, pady=(8, 4))
         self.projection_table = SimpleTable(
-            self,
+            parent,
             [
                 ("data", "Data", 100),
                 ("envio_previsto", "Envio previsto", 130),
                 ("entrada_shopee", "Entrada Shopee", 130),
                 ("saque", "Saque", 110),
-                ("despesa", "Despesa", 110),
+                ("despesa", "Despesa / estoque", 140),
                 ("saldo_disponivel", "Disponível fim dia", 150),
                 ("saldo_total_gerencial", "Total gerencial fim dia", 170),
             ],
-            height=6,
+            height=18,
         )
-        self.projection_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
+        self.projection_table.pack(fill="both", expand=True, padx=8, pady=8)
 
-    def _build_report_tables(self) -> None:
-        ctk.CTkLabel(self, text="Relatório do fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+    def _build_details_tab(self, parent) -> None:
+        ctk.CTkLabel(parent, text="Pedidos no fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=8, pady=(8, 0))
         self.pipeline_table = SimpleTable(
-            self,
+            parent,
             [
                 ("pedido_id", "Pedido", 150),
                 ("numero_rastreio", "Rastreio", 150),
@@ -162,12 +158,13 @@ class CashFlowView(ctk.CTkFrame):
                 ("valor_pago_real", "Pago", 110),
                 ("diferenca", "Diferença", 110),
             ],
-            height=5,
+            height=8,
         )
-        self.pipeline_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
+        self.pipeline_table.pack(fill="both", expand=True, padx=8, pady=8)
 
+        ctk.CTkLabel(parent, text="Movimentações", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=8, pady=(8, 0))
         self.events_table = SimpleTable(
-            self,
+            parent,
             [
                 ("data", "Data", 110),
                 ("tipo", "Tipo", 140),
@@ -177,9 +174,9 @@ class CashFlowView(ctk.CTkFrame):
                 ("saida", "Saída", 120),
                 ("status", "Status", 120),
             ],
-            height=5,
+            height=8,
         )
-        self.events_table.pack(fill="both", expand=True, padx=PAD, pady=(0, PAD))
+        self.events_table.pack(fill="both", expand=True, padx=8, pady=8)
 
     def _load_initial_position(self) -> None:
         try:
@@ -187,7 +184,6 @@ class CashFlowView(ctk.CTkFrame):
         except Exception as exc:
             self.status_var.set(f"Não consegui carregar a posição inicial: {exc}")
             return
-
         if position:
             self.cutoff_var.set(position["data_corte"])
             self.bank_var.set(brl(position["saldo_banco"]).replace("R$ ", ""))
@@ -209,7 +205,6 @@ class CashFlowView(ctk.CTkFrame):
         except Exception as exc:
             messagebox.showerror("Erro", f"Não foi possível salvar a posição inicial:\n{exc}")
             return
-
         messagebox.showinfo("Posição inicial", "Posição inicial salva com sucesso.")
         self.refresh()
 
@@ -227,15 +222,11 @@ class CashFlowView(ctk.CTkFrame):
             "saldo_shopee_espera": saldo_espera,
             "saldo_possivel_aberto": 0,
             "pedidos_em_aberto": 0,
-            "caixa_disponivel": disponibilidades,
             "disponibilidades": disponibilidades,
             "total_dinheiro_gerencial": total,
             "caixa_livre_estimado": disponibilidades,
-            "saques": 0,
             "despesas": 0,
             "imposto_reservado": 0,
-            "taxa_total_percentual": 0,
-            "tempo_liberacao_medio": 0,
         }
 
     def refresh(self) -> None:
@@ -258,18 +249,18 @@ class CashFlowView(ctk.CTkFrame):
             projection = list_daily_cashflow_forecast(month)
             self._render_projection(projection)
         except Exception as exc:
-            errors.append(f"Projeção: {exc}")
+            errors.append(f"Fluxo diário: {exc}")
             self.projection_table.set_rows([])
 
         try:
-            pipeline = list_shopee_pipeline(month, limit=80)
+            pipeline = list_shopee_pipeline(month, limit=120)
             self._render_pipeline(pipeline)
         except Exception as exc:
             errors.append(f"Pedidos: {exc}")
             self.pipeline_table.set_rows([])
 
         try:
-            events = list_cashflow_events(month, limit=80)
+            events = list_cashflow_events(month, limit=120)
             self._render_events(events)
         except Exception as exc:
             errors.append(f"Movimentações: {exc}")
@@ -284,13 +275,12 @@ class CashFlowView(ctk.CTkFrame):
         money_fields = {
             "total_dinheiro_gerencial",
             "disponibilidades",
+            "menor_disponibilidade",
             "saldo_banco",
             "saldo_shopee_disponivel",
             "saldo_shopee_espera",
             "saldo_possivel_aberto",
-            "caixa_disponivel",
             "caixa_livre_estimado",
-            "saques",
             "despesas",
             "imposto_reservado",
         }
@@ -298,10 +288,6 @@ class CashFlowView(ctk.CTkFrame):
             value = summary.get(key)
             if key in money_fields:
                 card.set_value(brl(value))
-            elif key == "taxa_total_percentual":
-                card.set_value(percent(value))
-            elif key == "tempo_liberacao_medio":
-                card.set_value(f"{float(value or 0):.1f} dias".replace(".", ","))
             else:
                 card.set_value(str(value if value not in (None, "") else "-"))
         for key, label in self.flow_values.items():
@@ -309,7 +295,13 @@ class CashFlowView(ctk.CTkFrame):
 
     def _render_projection(self, projection: list[dict]) -> None:
         rows = []
+        min_available = None
+        min_day = "-"
         for row in projection:
+            available = float(row.get("saldo_disponivel") or 0)
+            if min_available is None or available < min_available:
+                min_available = available
+                min_day = row.get("data") or "-"
             rows.append(
                 {
                     **row,
@@ -322,6 +314,10 @@ class CashFlowView(ctk.CTkFrame):
                 }
             )
         self.projection_table.set_rows(rows)
+        if "menor_disponibilidade" in self.cards:
+            self.cards["menor_disponibilidade"].set_value(brl(min_available or 0))
+        if "dia_critico" in self.cards:
+            self.cards["dia_critico"].set_value(min_day)
 
     def _render_pipeline(self, pipeline: list[dict]) -> None:
         rows = []
