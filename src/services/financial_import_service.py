@@ -12,7 +12,7 @@ from src.utils import mes_referencia_from_date, normalize_text
 
 
 REPORT_TYPE_LABELS = {
-    "pedidos_enviados": "Pedidos enviados / em espera",
+    "pedidos_enviados": "Pedidos a enviar / rastreios",
     "pagamentos_shopee": "Pagamentos e saques Shopee",
 }
 
@@ -22,26 +22,31 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
 
     if report_type == "pedidos_enviados":
         orders = importer.preview_orders(file_path, data_envio_real=data_envio_real)
-        valor_total = sum(order.valor_total for order in orders)
-        liquido = sum(order.valor_liquido_estimado for order in orders)
-        taxas = sum(order.comissao_liquida + order.taxa_servico_liquida + order.taxa_transacao for order in orders)
+        orders_valid = [order for order in orders if not order.esta_cancelado]
+        orders_tracked = [order for order in orders_valid if order.tem_rastreio]
+        orders_open = [order for order in orders_valid if not order.tem_rastreio]
+        valor_total = sum(order.valor_total for order in orders_valid)
+        liquido = sum(order.valor_liquido_estimado for order in orders_tracked)
+        taxas = sum(order.comissao_liquida + order.taxa_servico_liquida + order.taxa_transacao for order in orders_tracked)
         rows = [
             {
                 "pedido_id": order.pedido_id,
                 "status": order.status_pedido,
                 "data": order.data_envio_real or order.data_prevista_envio,
                 "valor": order.valor_total,
-                "liquido": order.valor_liquido_estimado,
-                "obs": f"{len(order.itens)} item(ns)",
+                "liquido": order.valor_liquido_estimado if order.tem_rastreio else 0,
+                "obs": "com rastreio" if order.tem_rastreio else "sem rastreio",
             }
             for order in orders[:200]
         ]
         return {
             "report_type": report_type,
-            "count": len(orders),
+            "count": len(orders_valid),
             "valor_total": valor_total,
             "valor_liquido": liquido,
             "taxas": taxas,
+            "pedidos_com_rastreio": len(orders_tracked),
+            "pedidos_sem_rastreio": len(orders_open),
             "rows": rows,
         }
 
@@ -173,21 +178,31 @@ def _save_orders(conn: sqlite3.Connection, importacao_id: int, orders: list[Fina
     timestamp = now_iso()
 
     for order in orders:
+        status_inicial = order.status_financeiro_inicial
         conn.execute(
             """
             INSERT INTO shopee_pedidos_financeiros (
-                pedido_id, importacao_id, status_pedido, data_criacao, data_pagamento,
+                pedido_id, importacao_id, status_pedido, numero_rastreio, data_criacao, data_pagamento,
                 data_prevista_envio, data_envio_real, valor_total, total_global, taxa_transacao,
                 comissao_bruta, comissao_liquida, taxa_servico_bruta, taxa_servico_liquida,
                 valor_liquido_estimado, status_financeiro, criado_em, atualizado_em
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'em_espera', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(pedido_id) DO UPDATE SET
                 importacao_id = excluded.importacao_id,
                 status_pedido = excluded.status_pedido,
+                numero_rastreio = CASE
+                    WHEN excluded.numero_rastreio IS NOT NULL AND TRIM(excluded.numero_rastreio) <> ''
+                    THEN excluded.numero_rastreio
+                    ELSE shopee_pedidos_financeiros.numero_rastreio
+                END,
                 data_criacao = excluded.data_criacao,
                 data_pagamento = excluded.data_pagamento,
                 data_prevista_envio = excluded.data_prevista_envio,
-                data_envio_real = excluded.data_envio_real,
+                data_envio_real = CASE
+                    WHEN excluded.data_envio_real IS NOT NULL AND TRIM(excluded.data_envio_real) <> ''
+                    THEN excluded.data_envio_real
+                    ELSE shopee_pedidos_financeiros.data_envio_real
+                END,
                 valor_total = excluded.valor_total,
                 total_global = excluded.total_global,
                 taxa_transacao = excluded.taxa_transacao,
@@ -196,12 +211,20 @@ def _save_orders(conn: sqlite3.Connection, importacao_id: int, orders: list[Fina
                 taxa_servico_bruta = excluded.taxa_servico_bruta,
                 taxa_servico_liquida = excluded.taxa_servico_liquida,
                 valor_liquido_estimado = excluded.valor_liquido_estimado,
+                status_financeiro = CASE
+                    WHEN excluded.status_financeiro = 'cancelado' THEN 'cancelado'
+                    WHEN shopee_pedidos_financeiros.status_financeiro IN ('liberado', 'divergente') THEN shopee_pedidos_financeiros.status_financeiro
+                    WHEN excluded.status_financeiro = 'em_espera' THEN 'em_espera'
+                    WHEN shopee_pedidos_financeiros.status_financeiro = 'em_espera' THEN 'em_espera'
+                    ELSE excluded.status_financeiro
+                END,
                 atualizado_em = excluded.atualizado_em
             """,
             (
                 order.pedido_id,
                 importacao_id,
                 order.status_pedido,
+                order.numero_rastreio,
                 order.data_criacao,
                 order.data_pagamento,
                 order.data_prevista_envio,
@@ -214,6 +237,7 @@ def _save_orders(conn: sqlite3.Connection, importacao_id: int, orders: list[Fina
                 order.taxa_servico_bruta,
                 order.taxa_servico_liquida,
                 order.valor_liquido_estimado,
+                status_inicial,
                 timestamp,
                 timestamp,
             ),
@@ -325,8 +349,14 @@ def _reconcile_all_orders(conn: sqlite3.Connection) -> None:
         SET valor_pago_real = 0,
             data_liberacao_shopee = NULL,
             diferenca = 0,
-            status_financeiro = 'em_espera',
+            status_financeiro = CASE
+                WHEN LOWER(status_pedido) LIKE '%cancel%' THEN 'cancelado'
+                WHEN numero_rastreio IS NOT NULL AND TRIM(numero_rastreio) <> '' THEN 'em_espera'
+                ELSE 'em_aberto'
+            END,
             atualizado_em = ?
+        WHERE status_financeiro NOT IN ('em_aberto', 'cancelado')
+           OR numero_rastreio IS NOT NULL
         """,
         (timestamp,),
     )
