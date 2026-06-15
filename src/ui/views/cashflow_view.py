@@ -1,18 +1,31 @@
+from datetime import date
+from tkinter import messagebox
+
 import customtkinter as ctk
 
-from src.services.cashflow_service import get_cashflow_summary
+from src.services.cashflow_service import (
+    get_cashflow_summary,
+    get_initial_position,
+    save_initial_position,
+)
 from src.services.reports_service import current_month_reference
 from src.ui.components import MetricCard
 from src.ui.theme import PAD
-from src.utils import brl, percent
+from src.utils import brl, money_to_float, percent
 
 
 class CashFlowView(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master)
+        today = date.today().isoformat()
         self.month_var = ctk.StringVar(value=current_month_reference())
+        self.cutoff_var = ctk.StringVar(value=today)
+        self.bank_var = ctk.StringVar(value="0")
+        self.shopee_cash_var = ctk.StringVar(value="0")
+        self.shopee_waiting_var = ctk.StringVar(value="0")
         self.cards = {}
         self._build()
+        self._load_initial_position()
 
     def _build(self) -> None:
         header = ctk.CTkFrame(self)
@@ -28,44 +41,105 @@ class CashFlowView(ctk.CTkFrame):
         ctk.CTkEntry(header, textvariable=self.month_var, width=90).pack(side="left", padx=6)
         ctk.CTkButton(header, text="Atualizar", command=self.refresh).pack(side="left", padx=8)
 
+        self._build_initial_position_box()
+        self._build_metric_cards()
+
+        self.info_label = ctk.CTkLabel(
+            self,
+            text=(
+                "Regra mestre: pedido enviado aumenta Shopee em espera; "
+                "pagamento Shopee reduz espera e aumenta Caixa Shopee; "
+                "saque reduz Caixa Shopee e aumenta Banco."
+            ),
+            text_color="gray",
+        )
+        self.info_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
+
+    def _build_initial_position_box(self) -> None:
+        box = ctk.CTkFrame(self)
+        box.pack(fill="x", padx=PAD, pady=(0, PAD))
+
+        ctk.CTkLabel(
+            box,
+            text="Posição inicial do controle",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).grid(row=0, column=0, columnspan=8, padx=8, pady=(8, 2), sticky="w")
+
+        ctk.CTkLabel(box, text="Data de corte:").grid(row=1, column=0, padx=8, pady=8)
+        ctk.CTkEntry(box, textvariable=self.cutoff_var, width=120).grid(row=1, column=1, padx=8, pady=8)
+
+        ctk.CTkLabel(box, text="Banco:").grid(row=1, column=2, padx=8, pady=8)
+        ctk.CTkEntry(box, textvariable=self.bank_var, width=110).grid(row=1, column=3, padx=8, pady=8)
+
+        ctk.CTkLabel(box, text="Caixa Shopee:").grid(row=1, column=4, padx=8, pady=8)
+        ctk.CTkEntry(box, textvariable=self.shopee_cash_var, width=110).grid(row=1, column=5, padx=8, pady=8)
+
+        ctk.CTkLabel(box, text="Shopee em espera:").grid(row=1, column=6, padx=8, pady=8)
+        ctk.CTkEntry(box, textvariable=self.shopee_waiting_var, width=110).grid(row=1, column=7, padx=8, pady=8)
+
+        ctk.CTkButton(box, text="Salvar posição inicial", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
+
+    def _build_metric_cards(self) -> None:
         metrics = ctk.CTkFrame(self)
         metrics.pack(fill="x", padx=PAD, pady=(0, PAD))
 
         metric_defs = [
-            ("em_espera", "Shopee em espera"),
-            ("saldo_shopee", "Saldo Shopee"),
+            ("saldo_banco", "Banco"),
+            ("saldo_shopee_disponivel", "Caixa Shopee"),
+            ("saldo_shopee_espera", "Shopee em espera"),
+            ("caixa_disponivel", "Caixa disponível"),
+            ("caixa_livre_estimado", "Caixa livre estimado"),
             ("saques", "Transferido no mês"),
             ("despesas", "Despesas no mês"),
             ("imposto_reservado", "Imposto reservado"),
-            ("caixa_livre_estimado", "Caixa livre estimado"),
             ("taxa_total_percentual", "Taxa média Shopee"),
             ("tempo_liberacao_medio", "Tempo médio liberação"),
         ]
 
         for idx, (key, title) in enumerate(metric_defs):
             card = MetricCard(metrics, title)
-            card.grid(row=idx // 4, column=idx % 4, sticky="ew", padx=6, pady=6)
-            metrics.grid_columnconfigure(idx % 4, weight=1)
+            card.grid(row=idx // 5, column=idx % 5, sticky="ew", padx=6, pady=6)
+            metrics.grid_columnconfigure(idx % 5, weight=1)
             self.cards[key] = card
 
-        self.info_label = ctk.CTkLabel(
-            self,
-            text="Importe pedidos enviados e o relatório de pagamentos na aba Importações para preencher estes indicadores.",
-            text_color="gray",
-        )
-        self.info_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
+    def _load_initial_position(self) -> None:
+        position = get_initial_position()
+        if not position:
+            self.refresh()
+            return
+        self.cutoff_var.set(position["data_corte"])
+        self.bank_var.set(brl(position["saldo_banco"]).replace("R$ ", ""))
+        self.shopee_cash_var.set(brl(position["saldo_shopee_disponivel"]).replace("R$ ", ""))
+        self.shopee_waiting_var.set(brl(position["saldo_shopee_espera"]).replace("R$ ", ""))
+        self.refresh()
+
+    def save_position(self) -> None:
+        try:
+            data_corte = date.fromisoformat(self.cutoff_var.get().strip())
+            saldo_banco = money_to_float(self.bank_var.get())
+            saldo_shopee = money_to_float(self.shopee_cash_var.get())
+            saldo_espera = money_to_float(self.shopee_waiting_var.get())
+        except ValueError:
+            messagebox.showerror("Erro", "Use data AAAA-MM-DD e valores numéricos válidos.")
+            return
+
+        save_initial_position(data_corte, saldo_banco, saldo_shopee, saldo_espera)
+        messagebox.showinfo("Posição inicial", "Posição inicial salva com sucesso.")
+        self.refresh()
 
     def refresh(self) -> None:
         month = self.month_var.get().strip()
         summary = get_cashflow_summary(month)
 
         money_fields = {
-            "em_espera",
-            "saldo_shopee",
+            "saldo_banco",
+            "saldo_shopee_disponivel",
+            "saldo_shopee_espera",
+            "caixa_disponivel",
+            "caixa_livre_estimado",
             "saques",
             "despesas",
             "imposto_reservado",
-            "caixa_livre_estimado",
         }
 
         for key, card in self.cards.items():
