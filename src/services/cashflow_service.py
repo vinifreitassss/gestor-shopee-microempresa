@@ -93,7 +93,10 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
                 END
             ), 0) AS prazo_envio_medio
         FROM shopee_pedidos_financeiros
-        WHERE date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
+        WHERE numero_rastreio IS NOT NULL
+          AND TRIM(numero_rastreio) <> ''
+          AND status_financeiro <> 'cancelado'
+          AND date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
         """,
         (start, end),
@@ -154,7 +157,10 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
             COALESCE(SUM(CASE WHEN status_financeiro = 'divergente' THEN diferenca ELSE 0 END), 0) AS total,
             COALESCE(SUM(CASE WHEN status_financeiro = 'divergente' THEN 1 ELSE 0 END), 0) AS pedidos
         FROM shopee_pedidos_financeiros
-        WHERE date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
+        WHERE numero_rastreio IS NOT NULL
+          AND TRIM(numero_rastreio) <> ''
+          AND status_financeiro <> 'cancelado'
+          AND date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
         """,
         (start, end),
@@ -169,8 +175,8 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
     total_despesas = float(despesas.get("total") or 0)
 
     # Regra de transição: como o controle está começando sem histórico completo,
-    # toda entrada Shopee reduz o saldo em espera. Quando a base estiver madura,
-    # poderemos trocar para abatimento apenas por código do pedido.
+    # toda entrada Shopee reduz o saldo em espera. Apenas pedidos com rastreio
+    # aumentam o saldo em espera.
     abatimento_espera = entradas_totais
 
     shopee_em_espera = initial_shopee_waiting + liquido_enviado - abatimento_espera
@@ -233,12 +239,15 @@ def list_cashflow_events(mes_referencia: str, limit: int = 200) -> list[dict]:
             date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao)) AS data,
             'Entrada prevista' AS tipo,
             pedido_id AS referencia,
-            'Pedido enviado / em espera Shopee' AS descricao,
+            'Pedido com rastreio / em espera Shopee' AS descricao,
             valor_liquido_estimado AS entrada,
             0 AS saida,
             status_financeiro AS status
         FROM shopee_pedidos_financeiros
-        WHERE date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
+        WHERE numero_rastreio IS NOT NULL
+          AND TRIM(numero_rastreio) <> ''
+          AND status_financeiro <> 'cancelado'
+          AND date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
 
         UNION ALL
@@ -294,6 +303,7 @@ def list_shopee_pipeline(mes_referencia: str, limit: int = 200) -> list[dict]:
         """
         SELECT
             pedido_id,
+            numero_rastreio,
             date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao)) AS data_envio,
             valor_total,
             valor_liquido_estimado,
@@ -311,7 +321,8 @@ def list_shopee_pipeline(mes_referencia: str, limit: int = 200) -> list[dict]:
             CASE status_financeiro
                 WHEN 'divergente' THEN 0
                 WHEN 'em_espera' THEN 1
-                ELSE 2
+                WHEN 'em_aberto' THEN 2
+                ELSE 3
             END,
             date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao)) ASC
         LIMIT ?
