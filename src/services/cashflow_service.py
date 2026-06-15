@@ -5,9 +5,11 @@ from src.services.settings_service import get_setting_float
 
 
 def month_bounds(mes_referencia: str) -> tuple[str, str]:
-    year_text, month_text = mes_referencia.split("-")
-    year = int(year_text)
-    month = int(month_text)
+    parts = mes_referencia.strip().split("-")
+    if len(parts) < 2:
+        raise ValueError("Informe o mês no formato AAAA-MM, exemplo: 2026-06.")
+    year = int(parts[0])
+    month = int(parts[1])
     start = date(year, month, 1)
     if month == 12:
         end = date(year + 1, 1, 1) - timedelta(days=1)
@@ -21,7 +23,7 @@ def get_initial_position() -> dict | None:
         """
         SELECT *
         FROM posicoes_iniciais_caixa
-        ORDER BY date(data_corte) DESC, id DESC
+        ORDER BY id DESC
         LIMIT 1
         """
     )
@@ -35,6 +37,7 @@ def save_initial_position(
 ) -> int:
     timestamp = now_iso()
     with get_connection() as conn:
+        conn.execute("DELETE FROM posicoes_iniciais_caixa")
         cursor = conn.execute(
             """
             INSERT INTO posicoes_iniciais_caixa (
@@ -45,7 +48,7 @@ def save_initial_position(
                 observacao,
                 criado_em,
                 atualizado_em
-            ) VALUES (?, ?, ?, ?, 'posição inicial informada manualmente', ?, ?)
+            ) VALUES (?, ?, ?, ?, 'posição inicial ativa', ?, ?)
             """,
             (
                 data_corte.isoformat(),
@@ -59,24 +62,43 @@ def save_initial_position(
         return int(cursor.lastrowid)
 
 
-def _movement_start(month_start: str, initial: dict | None) -> str:
+def _balance_start(initial: dict | None) -> str:
     if not initial:
-        return month_start
-    corte = str(initial.get("data_corte") or month_start)
-    return max(month_start, corte)
+        return "1900-01-01"
+    return str(initial.get("data_corte") or "1900-01-01")
+
+
+def _positive(value: float) -> float:
+    return value if value > 0 else 0
 
 
 def get_cashflow_summary(mes_referencia: str) -> dict:
     month_start, month_end = month_bounds(mes_referencia)
     initial = get_initial_position()
-    start = _movement_start(month_start, initial)
-    end = month_end
+    balance_start = _balance_start(initial)
+    balance_end = month_end
 
     initial_bank = float((initial or {}).get("saldo_banco") or 0)
     initial_shopee_cash = float((initial or {}).get("saldo_shopee_disponivel") or 0)
     initial_shopee_waiting = float((initial or {}).get("saldo_shopee_espera") or 0)
 
-    orders = fetch_one(
+    waiting_orders = fetch_one(
+        """
+        SELECT
+            COUNT(*) AS pedidos,
+            COALESCE(SUM(valor_total), 0) AS valor_bruto,
+            COALESCE(SUM(valor_liquido_estimado), 0) AS liquido_estimado,
+            COALESCE(SUM(comissao_liquida), 0) AS comissao,
+            COALESCE(SUM(taxa_servico_liquida), 0) AS taxa_servico,
+            COALESCE(SUM(taxa_transacao), 0) AS taxa_transacao
+        FROM shopee_pedidos_financeiros
+        WHERE numero_rastreio IS NOT NULL
+          AND TRIM(numero_rastreio) <> ''
+          AND status_financeiro = 'em_espera'
+        """
+    ) or {}
+
+    tracked_orders_month = fetch_one(
         """
         SELECT
             COUNT(*) AS pedidos,
@@ -99,7 +121,7 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
           AND date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
         """,
-        (start, end),
+        (month_start, month_end),
     ) or {}
 
     open_orders = fetch_one(
@@ -111,13 +133,10 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         FROM shopee_pedidos_financeiros
         WHERE (numero_rastreio IS NULL OR TRIM(numero_rastreio) = '')
           AND status_financeiro = 'em_aberto'
-          AND date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), '1900-01-01'))
-              BETWEEN date(?) AND date(?)
-        """,
-        (start, end),
+        """
     ) or {}
 
-    payments = fetch_one(
+    payments_balance = fetch_one(
         """
         SELECT
             COALESCE(SUM(CASE WHEN pedido_id IS NOT NULL AND TRIM(pedido_id) <> '' THEN valor ELSE 0 END), 0) AS pagamentos_pedidos,
@@ -134,7 +153,17 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         WHERE LOWER(t.direcao) = 'entrada'
           AND date(t.data_movimento) BETWEEN date(?) AND date(?)
         """,
-        (start, end),
+        (balance_start, balance_end),
+    ) or {}
+
+    payments_month = fetch_one(
+        """
+        SELECT COALESCE(SUM(valor), 0) AS entradas_totais
+        FROM shopee_transacoes
+        WHERE LOWER(direcao) = 'entrada'
+          AND date(data_movimento) BETWEEN date(?) AND date(?)
+        """,
+        (month_start, month_end),
     ) or {}
 
     latest_balance = fetch_one(
@@ -145,25 +174,43 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         ORDER BY datetime(data_movimento) DESC, id DESC
         LIMIT 1
         """,
-        (end,),
+        (balance_end,),
     ) or {}
 
-    saques = fetch_one(
+    saques_balance = fetch_one(
         """
         SELECT COALESCE(SUM(valor), 0) AS total
         FROM shopee_saques
         WHERE date(data_saque) BETWEEN date(?) AND date(?)
         """,
-        (start, end),
+        (balance_start, balance_end),
     ) or {}
 
-    despesas = fetch_one(
+    saques_month = fetch_one(
+        """
+        SELECT COALESCE(SUM(valor), 0) AS total
+        FROM shopee_saques
+        WHERE date(data_saque) BETWEEN date(?) AND date(?)
+        """,
+        (month_start, month_end),
+    ) or {}
+
+    despesas_balance = fetch_one(
         """
         SELECT COALESCE(SUM(valor), 0) AS total
         FROM despesas
         WHERE date(data) BETWEEN date(?) AND date(?)
         """,
-        (start, end),
+        (balance_start, balance_end),
+    ) or {}
+
+    despesas_month = fetch_one(
+        """
+        SELECT COALESCE(SUM(valor), 0) AS total
+        FROM despesas
+        WHERE date(data) BETWEEN date(?) AND date(?)
+        """,
+        (month_start, month_end),
     ) or {}
 
     divergences = fetch_one(
@@ -178,41 +225,43 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
           AND date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
         """,
-        (start, end),
+        (month_start, month_end),
     ) or {}
 
-    valor_bruto = float(orders.get("valor_bruto") or 0)
-    liquido_enviado = float(orders.get("liquido_estimado") or 0)
-    pagamentos_pedidos = float(payments.get("pagamentos_pedidos") or 0)
-    pagamentos_sem_pedido = float(payments.get("pagamentos_sem_pedido") or 0)
-    entradas_totais = float(payments.get("entradas_totais") or 0)
-    total_saques = float(saques.get("total") or 0)
-    total_despesas = float(despesas.get("total") or 0)
+    valor_bruto = float(tracked_orders_month.get("valor_bruto") or 0)
+    liquido_rastreado_mes = float(tracked_orders_month.get("liquido_estimado") or 0)
+    liquido_em_espera_atual = float(waiting_orders.get("liquido_estimado") or 0)
+    pagamentos_pedidos = float(payments_balance.get("pagamentos_pedidos") or 0)
+    pagamentos_sem_pedido = float(payments_balance.get("pagamentos_sem_pedido") or 0)
+    entradas_acumuladas = float(payments_balance.get("entradas_totais") or 0)
+    entradas_mes = float(payments_month.get("entradas_totais") or 0)
+    total_saques_acumulado = float(saques_balance.get("total") or 0)
+    total_saques_mes = float(saques_month.get("total") or 0)
+    total_despesas_acumulado = float(despesas_balance.get("total") or 0)
+    total_despesas_mes = float(despesas_month.get("total") or 0)
     saldo_possivel_aberto = float(open_orders.get("saldo_possivel_aberto") or 0)
     valor_bruto_aberto = float(open_orders.get("valor_bruto_aberto") or 0)
     pedidos_em_aberto = int(open_orders.get("pedidos_em_aberto") or 0)
 
-    # Regra de transição: como o controle está começando sem histórico completo,
-    # toda entrada Shopee reduz o saldo em espera. Apenas pedidos com rastreio
-    # aumentam o saldo em espera. Pedidos sem rastreio ficam como saldo possível.
-    abatimento_espera = entradas_totais
-
-    shopee_em_espera = initial_shopee_waiting + liquido_enviado - abatimento_espera
-    shopee_caixa = initial_shopee_cash + entradas_totais - total_saques
-    banco = initial_bank + total_saques - total_despesas
+    abatimento_espera = entradas_acumuladas
+    shopee_em_espera = _positive(initial_shopee_waiting + liquido_em_espera_atual - abatimento_espera)
+    shopee_caixa = initial_shopee_cash + entradas_acumuladas - total_saques_acumulado
+    banco = initial_bank + total_saques_acumulado - total_despesas_acumulado
 
     imposto_percentual = get_setting_float("imposto_percentual", 9)
     imposto_reservado = valor_bruto * imposto_percentual / 100
     taxa_total = (
-        float(orders.get("comissao") or 0)
-        + float(orders.get("taxa_servico") or 0)
-        + float(orders.get("taxa_transacao") or 0)
+        float(tracked_orders_month.get("comissao") or 0)
+        + float(tracked_orders_month.get("taxa_servico") or 0)
+        + float(tracked_orders_month.get("taxa_transacao") or 0)
     )
     caixa_livre = banco + shopee_caixa - imposto_reservado
 
+    pedidos_rastreados_mes = int(tracked_orders_month.get("pedidos") or 0)
+
     return {
-        "periodo_inicio": start,
-        "periodo_fim": end,
+        "periodo_inicio": month_start,
+        "periodo_fim": month_end,
         "data_corte": (initial or {}).get("data_corte", ""),
         "saldo_banco": banco,
         "saldo_shopee_disponivel": shopee_caixa,
@@ -223,29 +272,23 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         "saldo_shopee_relatorio": float(latest_balance.get("balanca_apos_transacoes") or 0),
         "caixa_disponivel": banco + shopee_caixa,
         "caixa_livre_estimado": caixa_livre,
-        "pedidos": int(orders.get("pedidos") or 0),
+        "pedidos": pedidos_rastreados_mes,
         "valor_bruto": valor_bruto,
-        "liquido_estimado": liquido_enviado,
+        "liquido_estimado": liquido_rastreado_mes,
         "pagamentos_pedidos": pagamentos_pedidos,
         "pagamentos_sem_pedido": pagamentos_sem_pedido,
         "abatimento_espera": abatimento_espera,
-        "entradas_shopee": entradas_totais,
-        "saques": total_saques,
-        "despesas": total_despesas,
+        "entradas_shopee": entradas_mes,
+        "saques": total_saques_mes,
+        "despesas": total_despesas_mes,
         "imposto_reservado": imposto_reservado,
         "taxa_total": taxa_total,
         "taxa_total_percentual": (taxa_total / valor_bruto * 100) if valor_bruto else 0,
-        "comissao_media": (float(orders.get("comissao") or 0) / int(orders.get("pedidos") or 1))
-        if int(orders.get("pedidos") or 0)
-        else 0,
-        "ticket_medio_bruto": (valor_bruto / int(orders.get("pedidos") or 1))
-        if int(orders.get("pedidos") or 0)
-        else 0,
-        "ticket_medio_liquido": (liquido_enviado / int(orders.get("pedidos") or 1))
-        if int(orders.get("pedidos") or 0)
-        else 0,
-        "prazo_envio_medio": float(orders.get("prazo_envio_medio") or 0),
-        "tempo_liberacao_medio": float(payments.get("tempo_liberacao_medio") or 0),
+        "comissao_media": (float(tracked_orders_month.get("comissao") or 0) / pedidos_rastreados_mes) if pedidos_rastreados_mes else 0,
+        "ticket_medio_bruto": (valor_bruto / pedidos_rastreados_mes) if pedidos_rastreados_mes else 0,
+        "ticket_medio_liquido": (liquido_rastreado_mes / pedidos_rastreados_mes) if pedidos_rastreados_mes else 0,
+        "prazo_envio_medio": float(tracked_orders_month.get("prazo_envio_medio") or 0),
+        "tempo_liberacao_medio": float(payments_balance.get("tempo_liberacao_medio") or 0),
         "divergencia_total": float(divergences.get("total") or 0),
         "pedidos_divergentes": int(divergences.get("pedidos") or 0),
         "imposto_percentual": imposto_percentual,
@@ -275,7 +318,7 @@ def list_cashflow_events(mes_referencia: str, limit: int = 200) -> list[dict]:
 
         SELECT
             date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), '1900-01-01')) AS data,
-            'Saldo possível' AS tipo,
+            'Aberto futuro' AS tipo,
             pedido_id AS referencia,
             'Pedido aberto sem rastreio / a enviar' AS descricao,
             valor_liquido_estimado AS entrada,
@@ -354,6 +397,7 @@ def list_shopee_pipeline(mes_referencia: str, limit: int = 200) -> list[dict]:
         FROM shopee_pedidos_financeiros
         WHERE date(COALESCE(NULLIF(data_envio_real, ''), NULLIF(data_prevista_envio, ''), data_criacao))
               BETWEEN date(?) AND date(?)
+           OR status_financeiro IN ('em_aberto', 'em_espera')
         ORDER BY
             CASE status_financeiro
                 WHEN 'divergente' THEN 0
