@@ -3,6 +3,7 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
+from src.database import init_database
 from src.services.cashflow_service import (
     get_cashflow_summary,
     get_initial_position,
@@ -24,8 +25,16 @@ class CashFlowView(ctk.CTkFrame):
         self.shopee_cash_var = ctk.StringVar(value="0")
         self.shopee_waiting_var = ctk.StringVar(value="0")
         self.cards = {}
+        self.status_var = ctk.StringVar(value="")
         self._build()
+        self._ensure_database_ready()
         self._load_initial_position()
+
+    def _ensure_database_ready(self) -> None:
+        try:
+            init_database()
+        except Exception as exc:
+            self.status_var.set(f"Erro ao preparar banco do fluxo de caixa: {exc}")
 
     def _build(self) -> None:
         header = ctk.CTkFrame(self)
@@ -53,7 +62,10 @@ class CashFlowView(ctk.CTkFrame):
             ),
             text_color="gray",
         )
-        self.info_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
+        self.info_label.pack(anchor="w", padx=PAD, pady=(0, 6))
+
+        self.status_label = ctk.CTkLabel(self, textvariable=self.status_var, text_color="gray")
+        self.status_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
 
     def _build_initial_position_box(self) -> None:
         box = ctk.CTkFrame(self)
@@ -103,18 +115,23 @@ class CashFlowView(ctk.CTkFrame):
             self.cards[key] = card
 
     def _load_initial_position(self) -> None:
-        position = get_initial_position()
-        if not position:
-            self.refresh()
+        try:
+            position = get_initial_position()
+        except Exception as exc:
+            self.status_var.set(f"Não consegui carregar a posição inicial: {exc}")
             return
-        self.cutoff_var.set(position["data_corte"])
-        self.bank_var.set(brl(position["saldo_banco"]).replace("R$ ", ""))
-        self.shopee_cash_var.set(brl(position["saldo_shopee_disponivel"]).replace("R$ ", ""))
-        self.shopee_waiting_var.set(brl(position["saldo_shopee_espera"]).replace("R$ ", ""))
+
+        if position:
+            self.cutoff_var.set(position["data_corte"])
+            self.bank_var.set(brl(position["saldo_banco"]).replace("R$ ", ""))
+            self.shopee_cash_var.set(brl(position["saldo_shopee_disponivel"]).replace("R$ ", ""))
+            self.shopee_waiting_var.set(brl(position["saldo_shopee_espera"]).replace("R$ ", ""))
+
         self.refresh()
 
     def save_position(self) -> None:
         try:
+            init_database()
             data_corte = date.fromisoformat(self.cutoff_var.get().strip())
             saldo_banco = money_to_float(self.bank_var.get())
             saldo_shopee = money_to_float(self.shopee_cash_var.get())
@@ -122,15 +139,26 @@ class CashFlowView(ctk.CTkFrame):
         except ValueError:
             messagebox.showerror("Erro", "Use data AAAA-MM-DD e valores numéricos válidos.")
             return
+        except Exception as exc:
+            messagebox.showerror("Erro", f"Não foi possível preparar o fluxo de caixa:\n{exc}")
+            return
 
         save_initial_position(data_corte, saldo_banco, saldo_shopee, saldo_espera)
         messagebox.showinfo("Posição inicial", "Posição inicial salva com sucesso.")
         self.refresh()
 
     def refresh(self) -> None:
-        month = self.month_var.get().strip()
-        summary = get_cashflow_summary(month)
+        try:
+            init_database()
+            month = self.month_var.get().strip()
+            summary = get_cashflow_summary(month)
+        except Exception as exc:
+            self.status_var.set(f"Erro ao atualizar fluxo de caixa: {exc}")
+            for card in self.cards.values():
+                card.set_value("-")
+            return
 
+        self.status_var.set("")
         money_fields = {
             "saldo_banco",
             "saldo_shopee_disponivel",
