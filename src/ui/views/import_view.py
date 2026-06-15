@@ -11,6 +11,7 @@ from src.services.financial_import_service import (
     save_financial_importation,
 )
 from src.services.import_service import (
+    delete_importation,
     find_importations_same_period,
     list_importations,
     save_importation,
@@ -39,6 +40,7 @@ class ImportView(ctk.CTkFrame):
         self.status_var = ctk.StringVar(value="Nenhuma planilha selecionada.")
         self.preview_lines = []
         self._build()
+        self.refresh()
 
     def _build(self) -> None:
         ctk.CTkLabel(self, text="Importações Shopee", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
@@ -62,7 +64,8 @@ class ImportView(ctk.CTkFrame):
 
         ctk.CTkButton(box, text="Pré-visualizar", command=self.preview).grid(row=2, column=0, padx=8, pady=8)
         ctk.CTkButton(box, text="Confirmar importação", command=self.confirm_import).grid(row=2, column=1, padx=8, pady=8, sticky="w")
-        ctk.CTkLabel(box, textvariable=self.status_var).grid(row=2, column=2, columnspan=6, padx=8, pady=8, sticky="w")
+        ctk.CTkButton(box, text="Excluir selecionada", command=self.delete_selected_importation).grid(row=2, column=2, padx=8, pady=8, sticky="w")
+        ctk.CTkLabel(box, textvariable=self.status_var).grid(row=2, column=3, columnspan=5, padx=8, pady=8, sticky="w")
         box.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self, text="Prévia da planilha", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
@@ -156,8 +159,10 @@ class ImportView(ctk.CTkFrame):
         if report_type == "pedidos_enviados":
             self.status_var.set(
                 f"{preview['count']} pedidos únicos. "
-                f"Bruto: {brl(preview['valor_total'])}. "
-                f"Líquido estimado: {brl(preview['valor_liquido'])}."
+                f"Com rastreio: {preview.get('pedidos_com_rastreio', 0)}. "
+                f"Sem rastreio: {preview.get('pedidos_sem_rastreio', 0)}. "
+                f"Aberto futuro: {brl(preview['valor_total'])}. "
+                f"Entra em espera: {brl(preview['valor_liquido'])}."
             )
         else:
             self.status_var.set(
@@ -205,6 +210,38 @@ class ImportView(ctk.CTkFrame):
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Erro", f"Não foi possível importar:\n{exc}")
+
+    def delete_selected_importation(self) -> None:
+        selected = self.history_table.selected_values()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma importação na tabela de histórico.")
+            return
+        try:
+            importacao_id = int(selected[0])
+        except (TypeError, ValueError):
+            messagebox.showerror("Erro", "Não consegui identificar o ID da importação selecionada.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Excluir importação",
+            f"Excluir a importação ID {importacao_id}?\n\n"
+            "Os dados gerados por essa planilha serão removidos do sistema.",
+        )
+        if not confirm:
+            return
+
+        try:
+            deleted = delete_importation(importacao_id)
+        except Exception as exc:
+            messagebox.showerror("Erro", f"Não foi possível excluir:\n{exc}")
+            return
+
+        if not deleted:
+            messagebox.showwarning("Atenção", "Importação não encontrada.")
+            return
+
+        self.status_var.set(f"Importação ID {importacao_id} excluída.")
+        self.refresh()
 
     def refresh(self) -> None:
         rows = list_importations()
