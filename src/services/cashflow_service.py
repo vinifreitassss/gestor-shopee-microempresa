@@ -149,9 +149,9 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
     payments_balance = fetch_one(
         """
         SELECT
-            COALESCE(SUM(CASE WHEN pedido_id IS NOT NULL AND TRIM(pedido_id) <> '' THEN valor ELSE 0 END), 0) AS pagamentos_pedidos,
-            COALESCE(SUM(CASE WHEN pedido_id IS NULL OR TRIM(pedido_id) = '' THEN valor ELSE 0 END), 0) AS pagamentos_sem_pedido,
-            COALESCE(SUM(valor), 0) AS entradas_totais,
+            COALESCE(SUM(CASE WHEN t.pedido_id IS NOT NULL AND TRIM(t.pedido_id) <> '' THEN t.valor ELSE 0 END), 0) AS pagamentos_pedidos,
+            COALESCE(SUM(CASE WHEN t.pedido_id IS NULL OR TRIM(t.pedido_id) = '' THEN t.valor ELSE 0 END), 0) AS pagamentos_sem_pedido,
+            COALESCE(SUM(t.valor), 0) AS entradas_totais,
             COALESCE(AVG(
                 CASE
                     WHEN p.data_envio_real IS NOT NULL AND p.data_envio_real <> ''
@@ -379,14 +379,22 @@ def list_daily_cashflow_forecast(mes_referencia: str) -> list[dict]:
         if row["data"] in rows_by_date:
             rows_by_date[row["data"]]["despesa"] = float(row["valor"] or 0)
 
-    saldo_disponivel = float(summary.get("disponibilidades") or 0)
-    saldo_total = float(summary.get("total_dinheiro_gerencial") or 0)
+    # O resumo é o saldo no fim do mês. Para projetar dia a dia, voltamos ao
+    # início do mês retirando os movimentos do mês e depois caminhamos dia a dia.
+    saldo_disponivel = (
+        float(summary.get("disponibilidades") or 0)
+        - float(summary.get("entradas_shopee") or 0)
+        + float(summary.get("despesas") or 0)
+    )
+    saldo_total = float(summary.get("total_dinheiro_gerencial") or 0) + float(summary.get("despesas") or 0)
 
     result = []
     for day in _date_range(start, end):
         row = rows_by_date[day]
         # Envio previsto apenas muda de Aberto futuro para Shopee em espera.
-        # Entrada Shopee e saque não alteram total gerencial; despesa reduz total e disponibilidade.
+        # Entrada Shopee aumenta disponibilidade e reduz espera.
+        # Saque é transferência interna entre Caixa Shopee e Banco.
+        # Despesa reduz disponibilidade e total gerencial.
         saldo_disponivel += float(row["entrada_shopee"] or 0) - float(row["despesa"] or 0)
         saldo_total -= float(row["despesa"] or 0)
         row["saldo_disponivel"] = saldo_disponivel
