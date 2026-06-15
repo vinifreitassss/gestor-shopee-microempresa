@@ -102,6 +102,21 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         (start, end),
     ) or {}
 
+    open_orders = fetch_one(
+        """
+        SELECT
+            COUNT(*) AS pedidos_em_aberto,
+            COALESCE(SUM(valor_total), 0) AS valor_bruto_aberto,
+            COALESCE(SUM(valor_liquido_estimado), 0) AS saldo_possivel_aberto
+        FROM shopee_pedidos_financeiros
+        WHERE (numero_rastreio IS NULL OR TRIM(numero_rastreio) = '')
+          AND status_financeiro = 'em_aberto'
+          AND date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), '1900-01-01'))
+              BETWEEN date(?) AND date(?)
+        """,
+        (start, end),
+    ) or {}
+
     payments = fetch_one(
         """
         SELECT
@@ -173,10 +188,13 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
     entradas_totais = float(payments.get("entradas_totais") or 0)
     total_saques = float(saques.get("total") or 0)
     total_despesas = float(despesas.get("total") or 0)
+    saldo_possivel_aberto = float(open_orders.get("saldo_possivel_aberto") or 0)
+    valor_bruto_aberto = float(open_orders.get("valor_bruto_aberto") or 0)
+    pedidos_em_aberto = int(open_orders.get("pedidos_em_aberto") or 0)
 
     # Regra de transição: como o controle está começando sem histórico completo,
     # toda entrada Shopee reduz o saldo em espera. Apenas pedidos com rastreio
-    # aumentam o saldo em espera.
+    # aumentam o saldo em espera. Pedidos sem rastreio ficam como saldo possível.
     abatimento_espera = entradas_totais
 
     shopee_em_espera = initial_shopee_waiting + liquido_enviado - abatimento_espera
@@ -199,6 +217,9 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         "saldo_banco": banco,
         "saldo_shopee_disponivel": shopee_caixa,
         "saldo_shopee_espera": shopee_em_espera,
+        "saldo_possivel_aberto": saldo_possivel_aberto,
+        "valor_bruto_aberto": valor_bruto_aberto,
+        "pedidos_em_aberto": pedidos_em_aberto,
         "saldo_shopee_relatorio": float(latest_balance.get("balanca_apos_transacoes") or 0),
         "caixa_disponivel": banco + shopee_caixa,
         "caixa_livre_estimado": caixa_livre,
@@ -253,6 +274,22 @@ def list_cashflow_events(mes_referencia: str, limit: int = 200) -> list[dict]:
         UNION ALL
 
         SELECT
+            date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), '1900-01-01')) AS data,
+            'Saldo possível' AS tipo,
+            pedido_id AS referencia,
+            'Pedido aberto sem rastreio / a enviar' AS descricao,
+            valor_liquido_estimado AS entrada,
+            0 AS saida,
+            status_financeiro AS status
+        FROM shopee_pedidos_financeiros
+        WHERE (numero_rastreio IS NULL OR TRIM(numero_rastreio) = '')
+          AND status_financeiro = 'em_aberto'
+          AND date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), '1900-01-01'))
+              BETWEEN date(?) AND date(?)
+
+        UNION ALL
+
+        SELECT
             date(data_movimento) AS data,
             'Entrada Shopee' AS tipo,
             COALESCE(pedido_id, '') AS referencia,
@@ -293,7 +330,7 @@ def list_cashflow_events(mes_referencia: str, limit: int = 200) -> list[dict]:
         ORDER BY data ASC, tipo ASC
         LIMIT ?
         """,
-        (start, end, start, end, start, end, start, end, limit),
+        (start, end, start, end, start, end, start, end, start, end, limit),
     )
 
 
