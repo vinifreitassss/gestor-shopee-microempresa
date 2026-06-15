@@ -4,10 +4,30 @@ from src.database import fetch_all, get_connection, now_iso
 from src.utils import mes_referencia_from_date
 
 
+EXPENSE_CATEGORIES = [
+    "Operacional",
+    "Marketing",
+    "Frete / logística",
+    "Embalagem",
+    "Ferramentas / sistemas",
+    "Contabilidade / impostos",
+    "Investimento em estoque",
+    "Compra de insumos",
+    "Retirada / pró-labore",
+    "Outros",
+]
+
+
+DRE_IMPACT_OPTIONS = {
+    "Entra no DRE": 1,
+    "Somente fluxo de caixa": 0,
+}
+
+
 def list_expenses(mes_referencia: str) -> list[dict]:
     return fetch_all(
         """
-        SELECT id, data, categoria, descricao, valor, criado_em
+        SELECT id, data, categoria, descricao, valor, incide_dre, criado_em
         FROM despesas
         WHERE mes_referencia = ?
         ORDER BY data DESC, id DESC
@@ -16,15 +36,15 @@ def list_expenses(mes_referencia: str) -> list[dict]:
     )
 
 
-def add_expense(data: date, categoria: str, descricao: str, valor: float) -> None:
+def add_expense(data: date, categoria: str, descricao: str, valor: float, incide_dre: bool = True) -> None:
     mes_ref = mes_referencia_from_date(data)
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO despesas (data, mes_referencia, categoria, descricao, valor, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO despesas (data, mes_referencia, categoria, descricao, valor, incide_dre, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (data.isoformat(), mes_ref, categoria, descricao, valor, now_iso()),
+            (data.isoformat(), mes_ref, categoria, descricao, valor, 1 if incide_dre else 0, now_iso()),
         )
 
 
@@ -37,7 +57,7 @@ def delete_expense(expense_id: int) -> bool:
 def list_recurring_expenses() -> list[dict]:
     return fetch_all(
         """
-        SELECT id, categoria, descricao, valor_padrao, dia_vencimento, frequencia, ativo
+        SELECT id, categoria, descricao, valor_padrao, dia_vencimento, frequencia, incide_dre, ativo
         FROM despesas_recorrentes
         WHERE ativo = 1
         ORDER BY categoria, descricao
@@ -45,15 +65,21 @@ def list_recurring_expenses() -> list[dict]:
     )
 
 
-def add_recurring_expense(categoria: str, descricao: str, valor: float, dia_vencimento: int) -> None:
+def add_recurring_expense(
+    categoria: str,
+    descricao: str,
+    valor: float,
+    dia_vencimento: int,
+    incide_dre: bool = True,
+) -> None:
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO despesas_recorrentes (
-                categoria, descricao, valor_padrao, dia_vencimento, frequencia, ativo, criado_em
-            ) VALUES (?, ?, ?, ?, 'mensal', 1, ?)
+                categoria, descricao, valor_padrao, dia_vencimento, incide_dre, frequencia, ativo, criado_em
+            ) VALUES (?, ?, ?, ?, ?, 'mensal', 1, ?)
             """,
-            (categoria, descricao, valor, dia_vencimento, now_iso()),
+            (categoria, descricao, valor, dia_vencimento, 1 if incide_dre else 0, now_iso()),
         )
 
 
@@ -86,8 +112,8 @@ def generate_recurring_for_month(mes_referencia: str) -> int:
             conn.execute(
                 """
                 INSERT INTO despesas (
-                    data, mes_referencia, categoria, descricao, valor, recorrente_id, criado_em
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    data, mes_referencia, categoria, descricao, valor, incide_dre, recorrente_id, criado_em
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     expense_date.isoformat(),
@@ -95,6 +121,7 @@ def generate_recurring_for_month(mes_referencia: str) -> int:
                     item["categoria"],
                     item["descricao"],
                     item["valor_padrao"],
+                    int(item.get("incide_dre", 1) or 0),
                     item["id"],
                     now_iso(),
                 ),
