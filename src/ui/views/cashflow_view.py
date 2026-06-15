@@ -8,6 +8,7 @@ from src.services.cashflow_service import (
     get_cashflow_summary,
     get_initial_position,
     list_cashflow_events,
+    list_daily_cashflow_forecast,
     list_shopee_pipeline,
     save_initial_position,
 )
@@ -54,11 +55,12 @@ class CashFlowView(ctk.CTkFrame):
         self._build_initial_position_box()
         self._build_metric_cards()
         self._build_flow_diagram()
+        self._build_projection_table()
         self._build_report_tables()
 
         self.info_label = ctk.CTkLabel(
             self,
-            text="Pedido sem rastreio fica em aberto futuro; pedido com rastreio entra em Shopee em espera; pagamento libera para Caixa Shopee; saque move para Banco.",
+            text="Projeção: data prevista de envio move aberto futuro para espera; entradas Shopee aumentam disponibilidade; despesas reduzem disponibilidade e total gerencial.",
             text_color="gray",
         )
         self.info_label.pack(anchor="w", padx=PAD, pady=(0, PAD))
@@ -83,18 +85,18 @@ class CashFlowView(ctk.CTkFrame):
         metrics.pack(fill="x", padx=PAD, pady=(0, PAD))
 
         metric_defs = [
+            ("total_dinheiro_gerencial", "Total gerencial"),
+            ("disponibilidades", "Disponibilidades"),
             ("saldo_banco", "Banco"),
             ("saldo_shopee_disponivel", "Caixa Shopee"),
             ("saldo_shopee_espera", "Shopee em espera"),
             ("saldo_possivel_aberto", "Aberto futuro"),
             ("pedidos_em_aberto", "Pedidos sem rastreio"),
-            ("caixa_disponivel", "Caixa disponível"),
             ("caixa_livre_estimado", "Caixa livre estimado"),
             ("saques", "Transferido no mês"),
             ("despesas", "Despesas no mês"),
             ("imposto_reservado", "Imposto reservado"),
             ("taxa_total_percentual", "Taxa média Shopee"),
-            ("tempo_liberacao_medio", "Tempo médio liberação"),
         ]
 
         for idx, (key, title) in enumerate(metric_defs):
@@ -128,6 +130,23 @@ class CashFlowView(ctk.CTkFrame):
             if col < 7:
                 ctk.CTkLabel(flow, text="→", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=col, padx=2)
                 col += 1
+
+    def _build_projection_table(self) -> None:
+        ctk.CTkLabel(self, text="Projeção diária", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
+        self.projection_table = SimpleTable(
+            self,
+            [
+                ("data", "Data", 100),
+                ("envio_previsto", "Envio previsto", 130),
+                ("entrada_shopee", "Entrada Shopee", 130),
+                ("saque", "Saque", 110),
+                ("despesa", "Despesa", 110),
+                ("saldo_disponivel", "Disponível fim dia", 150),
+                ("saldo_total_gerencial", "Total gerencial fim dia", 170),
+            ],
+            height=6,
+        )
+        self.projection_table.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
 
     def _build_report_tables(self) -> None:
         ctk.CTkLabel(self, text="Relatório do fluxo", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=PAD)
@@ -198,6 +217,8 @@ class CashFlowView(ctk.CTkFrame):
         saldo_banco = money_to_float(self.bank_var.get())
         saldo_shopee = money_to_float(self.shopee_cash_var.get())
         saldo_espera = money_to_float(self.shopee_waiting_var.get())
+        disponibilidades = saldo_banco + saldo_shopee
+        total = disponibilidades + saldo_espera
         return {
             "periodo_inicio": "-",
             "periodo_fim": "-",
@@ -206,8 +227,10 @@ class CashFlowView(ctk.CTkFrame):
             "saldo_shopee_espera": saldo_espera,
             "saldo_possivel_aberto": 0,
             "pedidos_em_aberto": 0,
-            "caixa_disponivel": saldo_banco + saldo_shopee,
-            "caixa_livre_estimado": saldo_banco + saldo_shopee,
+            "caixa_disponivel": disponibilidades,
+            "disponibilidades": disponibilidades,
+            "total_dinheiro_gerencial": total,
+            "caixa_livre_estimado": disponibilidades,
             "saques": 0,
             "despesas": 0,
             "imposto_reservado": 0,
@@ -232,6 +255,13 @@ class CashFlowView(ctk.CTkFrame):
         self._render_summary(summary)
 
         try:
+            projection = list_daily_cashflow_forecast(month)
+            self._render_projection(projection)
+        except Exception as exc:
+            errors.append(f"Projeção: {exc}")
+            self.projection_table.set_rows([])
+
+        try:
             pipeline = list_shopee_pipeline(month, limit=80)
             self._render_pipeline(pipeline)
         except Exception as exc:
@@ -252,6 +282,8 @@ class CashFlowView(ctk.CTkFrame):
 
     def _render_summary(self, summary: dict) -> None:
         money_fields = {
+            "total_dinheiro_gerencial",
+            "disponibilidades",
             "saldo_banco",
             "saldo_shopee_disponivel",
             "saldo_shopee_espera",
@@ -274,6 +306,22 @@ class CashFlowView(ctk.CTkFrame):
                 card.set_value(str(value if value not in (None, "") else "-"))
         for key, label in self.flow_values.items():
             label.configure(text=brl(summary.get(key)))
+
+    def _render_projection(self, projection: list[dict]) -> None:
+        rows = []
+        for row in projection:
+            rows.append(
+                {
+                    **row,
+                    "envio_previsto": brl(row.get("envio_previsto")) if float(row.get("envio_previsto") or 0) else "",
+                    "entrada_shopee": brl(row.get("entrada_shopee")) if float(row.get("entrada_shopee") or 0) else "",
+                    "saque": brl(row.get("saque")) if float(row.get("saque") or 0) else "",
+                    "despesa": brl(row.get("despesa")) if float(row.get("despesa") or 0) else "",
+                    "saldo_disponivel": brl(row.get("saldo_disponivel")),
+                    "saldo_total_gerencial": brl(row.get("saldo_total_gerencial")),
+                }
+            )
+        self.projection_table.set_rows(rows)
 
     def _render_pipeline(self, pipeline: list[dict]) -> None:
         rows = []
