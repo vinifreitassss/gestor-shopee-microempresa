@@ -26,7 +26,10 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
         orders_tracked = [order for order in orders_valid if order.tem_rastreio]
         orders_open = [order for order in orders_valid if not order.tem_rastreio]
         valor_total = sum(order.valor_total for order in orders_valid)
-        liquido = sum(order.valor_liquido_estimado for order in orders_tracked)
+        valor_total_aberto = sum(order.valor_total for order in orders_open)
+        valor_total_rastreado = sum(order.valor_total for order in orders_tracked)
+        liquido_aberto = sum(order.valor_liquido_estimado for order in orders_open)
+        liquido_rastreado = sum(order.valor_liquido_estimado for order in orders_tracked)
         taxas = sum(order.comissao_liquida + order.taxa_servico_liquida + order.taxa_transacao for order in orders_tracked)
         rows = [
             {
@@ -34,8 +37,8 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
                 "status": order.status_pedido,
                 "data": order.data_envio_real or order.data_prevista_envio,
                 "valor": order.valor_total,
-                "liquido": order.valor_liquido_estimado if order.tem_rastreio else 0,
-                "obs": "com rastreio" if order.tem_rastreio else "sem rastreio",
+                "liquido": order.valor_liquido_estimado,
+                "obs": "em espera" if order.tem_rastreio else "aberto futuro",
             }
             for order in orders[:200]
         ]
@@ -43,7 +46,10 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
             "report_type": report_type,
             "count": len(orders_valid),
             "valor_total": valor_total,
-            "valor_liquido": liquido,
+            "valor_total_aberto": valor_total_aberto,
+            "valor_total_rastreado": valor_total_rastreado,
+            "valor_liquido": liquido_rastreado,
+            "saldo_possivel_aberto": liquido_aberto,
             "taxas": taxas,
             "pedidos_com_rastreio": len(orders_tracked),
             "pedidos_sem_rastreio": len(orders_open),
@@ -169,8 +175,6 @@ def _delete_existing_same_period(
     data_inicio: date,
     data_fim: date,
 ) -> None:
-    # Os dados financeiros são idempotentes por pedido/transação.
-    # Mantemos o histórico de importações e evitamos apagar dados já conciliados.
     return
 
 
