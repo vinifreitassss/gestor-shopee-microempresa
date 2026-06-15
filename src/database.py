@@ -278,6 +278,17 @@ def init_database() -> None:
                 FOREIGN KEY (importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS posicoes_iniciais_caixa (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data_corte TEXT NOT NULL,
+                saldo_banco REAL NOT NULL DEFAULT 0,
+                saldo_shopee_disponivel REAL NOT NULL DEFAULT 0,
+                saldo_shopee_espera REAL NOT NULL DEFAULT 0,
+                observacao TEXT DEFAULT '',
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_status
                 ON shopee_pedidos_financeiros(status_financeiro);
             CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_envio
@@ -288,6 +299,8 @@ def init_database() -> None:
                 ON shopee_transacoes(data_movimento);
             CREATE INDEX IF NOT EXISTS idx_shopee_saques_data
                 ON shopee_saques(data_saque);
+            CREATE INDEX IF NOT EXISTS idx_posicoes_iniciais_caixa_data
+                ON posicoes_iniciais_caixa(data_corte);
 
             CREATE TABLE IF NOT EXISTS fechamentos_mensais (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
