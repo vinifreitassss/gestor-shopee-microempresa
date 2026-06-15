@@ -136,12 +136,7 @@ def get_importation(importacao_id: int) -> dict | None:
 
 
 def delete_importation(importacao_id: int) -> bool:
-    """Exclui uma planilha importada e suas vendas vinculadas.
-
-    As tabelas linhas_importadas e vendas_contabilizadas usam ON DELETE CASCADE,
-    então apagar a importação remove a apuração gerada por aquela planilha.
-    Produtos, variações, custos e insumos cadastrados serão mantidos.
-    """
+    """Exclui uma planilha importada e os dados gerados por ela."""
     with get_connection() as conn:
         current = conn.execute(
             "SELECT id, tipo_relatorio FROM importacoes WHERE id = ?",
@@ -149,6 +144,30 @@ def delete_importation(importacao_id: int) -> bool:
         ).fetchone()
         if not current:
             return False
+
+        report_type = current["tipo_relatorio"]
+
+        if report_type == "performance":
+            conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
+            return True
+
+        if report_type == "pedidos_enviados":
+            conn.execute("DELETE FROM shopee_itens_pedido WHERE importacao_id = ?", (importacao_id,))
+            conn.execute("DELETE FROM shopee_pedidos_financeiros WHERE importacao_id = ?", (importacao_id,))
+            conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
+            from src.services.financial_import_service import _reconcile_all_orders
+
+            _reconcile_all_orders(conn)
+            return True
+
+        if report_type == "pagamentos_shopee":
+            conn.execute("DELETE FROM shopee_saques WHERE importacao_id = ?", (importacao_id,))
+            conn.execute("DELETE FROM shopee_transacoes WHERE importacao_id = ?", (importacao_id,))
+            conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
+            from src.services.financial_import_service import _reconcile_all_orders
+
+            _reconcile_all_orders(conn)
+            return True
 
         conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
         return True
