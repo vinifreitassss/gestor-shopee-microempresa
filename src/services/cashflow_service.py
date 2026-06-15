@@ -103,6 +103,7 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         """
         SELECT
             COALESCE(SUM(CASE WHEN pedido_id IS NOT NULL AND TRIM(pedido_id) <> '' THEN valor ELSE 0 END), 0) AS pagamentos_pedidos,
+            COALESCE(SUM(CASE WHEN pedido_id IS NULL OR TRIM(pedido_id) = '' THEN valor ELSE 0 END), 0) AS pagamentos_sem_pedido,
             COALESCE(SUM(valor), 0) AS entradas_totais,
             COALESCE(AVG(
                 CASE
@@ -162,11 +163,17 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
     valor_bruto = float(orders.get("valor_bruto") or 0)
     liquido_enviado = float(orders.get("liquido_estimado") or 0)
     pagamentos_pedidos = float(payments.get("pagamentos_pedidos") or 0)
+    pagamentos_sem_pedido = float(payments.get("pagamentos_sem_pedido") or 0)
     entradas_totais = float(payments.get("entradas_totais") or 0)
     total_saques = float(saques.get("total") or 0)
     total_despesas = float(despesas.get("total") or 0)
 
-    shopee_em_espera = initial_shopee_waiting + liquido_enviado - pagamentos_pedidos
+    # Regra de transição: como o controle está começando sem histórico completo,
+    # toda entrada Shopee reduz o saldo em espera. Quando a base estiver madura,
+    # poderemos trocar para abatimento apenas por código do pedido.
+    abatimento_espera = entradas_totais
+
+    shopee_em_espera = initial_shopee_waiting + liquido_enviado - abatimento_espera
     shopee_caixa = initial_shopee_cash + entradas_totais - total_saques
     banco = initial_bank + total_saques - total_despesas
 
@@ -193,6 +200,8 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         "valor_bruto": valor_bruto,
         "liquido_estimado": liquido_enviado,
         "pagamentos_pedidos": pagamentos_pedidos,
+        "pagamentos_sem_pedido": pagamentos_sem_pedido,
+        "abatimento_espera": abatimento_espera,
         "entradas_shopee": entradas_totais,
         "saques": total_saques,
         "despesas": total_despesas,
