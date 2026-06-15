@@ -72,6 +72,16 @@ def _positive(value: float) -> float:
     return value if value > 0 else 0
 
 
+def _date_range(start: str, end: str) -> list[str]:
+    current = date.fromisoformat(start)
+    last = date.fromisoformat(end)
+    days = []
+    while current <= last:
+        days.append(current.isoformat())
+        current += timedelta(days=1)
+    return days
+
+
 def get_cashflow_summary(mes_referencia: str) -> dict:
     month_start, month_end = month_bounds(mes_referencia)
     initial = get_initial_position()
@@ -248,6 +258,9 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
     shopee_caixa = initial_shopee_cash + entradas_acumuladas - total_saques_acumulado
     banco = initial_bank + total_saques_acumulado - total_despesas_acumulado
 
+    disponibilidades = banco + shopee_caixa
+    total_gerencial = disponibilidades + shopee_em_espera + saldo_possivel_aberto
+
     imposto_percentual = get_setting_float("imposto_percentual", 9)
     imposto_reservado = valor_bruto * imposto_percentual / 100
     taxa_total = (
@@ -255,8 +268,7 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         + float(tracked_orders_month.get("taxa_servico") or 0)
         + float(tracked_orders_month.get("taxa_transacao") or 0)
     )
-    caixa_livre = banco + shopee_caixa - imposto_reservado
-
+    caixa_livre = disponibilidades - imposto_reservado
     pedidos_rastreados_mes = int(tracked_orders_month.get("pedidos") or 0)
 
     return {
@@ -270,7 +282,9 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         "valor_bruto_aberto": valor_bruto_aberto,
         "pedidos_em_aberto": pedidos_em_aberto,
         "saldo_shopee_relatorio": float(latest_balance.get("balanca_apos_transacoes") or 0),
-        "caixa_disponivel": banco + shopee_caixa,
+        "caixa_disponivel": disponibilidades,
+        "disponibilidades": disponibilidades,
+        "total_dinheiro_gerencial": total_gerencial,
         "caixa_livre_estimado": caixa_livre,
         "pedidos": pedidos_rastreados_mes,
         "valor_bruto": valor_bruto,
@@ -293,6 +307,92 @@ def get_cashflow_summary(mes_referencia: str) -> dict:
         "pedidos_divergentes": int(divergences.get("pedidos") or 0),
         "imposto_percentual": imposto_percentual,
     }
+
+
+def list_daily_cashflow_forecast(mes_referencia: str) -> list[dict]:
+    start, end = month_bounds(mes_referencia)
+    summary = get_cashflow_summary(mes_referencia)
+
+    rows_by_date = {
+        day: {
+            "data": day,
+            "envio_previsto": 0.0,
+            "entrada_shopee": 0.0,
+            "saque": 0.0,
+            "despesa": 0.0,
+            "saldo_disponivel": 0.0,
+            "saldo_total_gerencial": 0.0,
+        }
+        for day in _date_range(start, end)
+    }
+
+    for row in fetch_all(
+        """
+        SELECT
+            date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), ?)) AS data,
+            COALESCE(SUM(valor_liquido_estimado), 0) AS valor
+        FROM shopee_pedidos_financeiros
+        WHERE (numero_rastreio IS NULL OR TRIM(numero_rastreio) = '')
+          AND status_financeiro = 'em_aberto'
+          AND date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), ?)) BETWEEN date(?) AND date(?)
+        GROUP BY date(COALESCE(NULLIF(data_prevista_envio, ''), NULLIF(data_criacao, ''), ?))
+        """,
+        (start, start, start, end, start),
+    ):
+        if row["data"] in rows_by_date:
+            rows_by_date[row["data"]]["envio_previsto"] = float(row["valor"] or 0)
+
+    for row in fetch_all(
+        """
+        SELECT date(data_movimento) AS data, COALESCE(SUM(valor), 0) AS valor
+        FROM shopee_transacoes
+        WHERE LOWER(direcao) = 'entrada'
+          AND date(data_movimento) BETWEEN date(?) AND date(?)
+        GROUP BY date(data_movimento)
+        """,
+        (start, end),
+    ):
+        if row["data"] in rows_by_date:
+            rows_by_date[row["data"]]["entrada_shopee"] = float(row["valor"] or 0)
+
+    for row in fetch_all(
+        """
+        SELECT date(data_saque) AS data, COALESCE(SUM(valor), 0) AS valor
+        FROM shopee_saques
+        WHERE date(data_saque) BETWEEN date(?) AND date(?)
+        GROUP BY date(data_saque)
+        """,
+        (start, end),
+    ):
+        if row["data"] in rows_by_date:
+            rows_by_date[row["data"]]["saque"] = float(row["valor"] or 0)
+
+    for row in fetch_all(
+        """
+        SELECT date(data) AS data, COALESCE(SUM(valor), 0) AS valor
+        FROM despesas
+        WHERE date(data) BETWEEN date(?) AND date(?)
+        GROUP BY date(data)
+        """,
+        (start, end),
+    ):
+        if row["data"] in rows_by_date:
+            rows_by_date[row["data"]]["despesa"] = float(row["valor"] or 0)
+
+    saldo_disponivel = float(summary.get("disponibilidades") or 0)
+    saldo_total = float(summary.get("total_dinheiro_gerencial") or 0)
+
+    result = []
+    for day in _date_range(start, end):
+        row = rows_by_date[day]
+        # Envio previsto apenas muda de Aberto futuro para Shopee em espera.
+        # Entrada Shopee e saque não alteram total gerencial; despesa reduz total e disponibilidade.
+        saldo_disponivel += float(row["entrada_shopee"] or 0) - float(row["despesa"] or 0)
+        saldo_total -= float(row["despesa"] or 0)
+        row["saldo_disponivel"] = saldo_disponivel
+        row["saldo_total_gerencial"] = saldo_total
+        result.append(row)
+    return result
 
 
 def list_cashflow_events(mes_referencia: str, limit: int = 200) -> list[dict]:
