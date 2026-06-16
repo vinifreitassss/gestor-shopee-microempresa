@@ -41,11 +41,17 @@ APPS: list[ManagedApp] = [
     ),
     ManagedApp(
         key="zebraweb",
-        nome="Zebraweb / etiquetas",
+        nome="Zebraweb / servidor central",
         pasta=r"C:\Users\Meu Computador\Downloads\Zebraweb\central",
         comando="py -m uvicorn main:app --host 0.0.0.0 --port 8757",
         url="http://localhost:8757",
         porta=8757,
+    ),
+    ManagedApp(
+        key="zebraweb_agent",
+        nome="Zebraweb / agente de impressão",
+        pasta=r"C:\Users\Meu Computador\Downloads\Zebraweb\agent",
+        comando="py print_agent.py",
     ),
 ]
 
