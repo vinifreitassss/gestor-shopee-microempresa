@@ -43,6 +43,52 @@ def list_variations() -> list[dict]:
     )
 
 
+def list_variations_with_sales_metrics(mes_referencia: str | None = None) -> list[dict]:
+    where_month = "AND v.mes_referencia = ?" if mes_referencia else ""
+    params = (mes_referencia,) if mes_referencia else ()
+    rows = fetch_all(
+        f"""
+        SELECT
+            var.id,
+            pp.nome AS produto_pai,
+            var.nome_variacao,
+            var.sku,
+            var.tipo_produto,
+            (
+                SELECT custo_unitario
+                FROM custos_variacao cv
+                WHERE cv.variacao_id = var.id AND cv.ativo = 1
+                ORDER BY cv.criado_em DESC, cv.id DESC
+                LIMIT 1
+            ) AS custo_unitario,
+            COALESCE(SUM(v.unidades), 0) AS unidades_vendidas,
+            COALESCE(SUM(v.faturamento), 0) AS faturamento,
+            COALESCE(SUM(COALESCE(v.custo_total, 0)), 0) AS custo_total,
+            COALESCE(SUM(COALESCE(v.lucro, 0)), 0) AS lucro,
+            COALESCE(SUM(v.lucro_incompleto), 0) AS pendencias
+        FROM variacoes var
+        JOIN produtos_pai pp ON pp.id = var.produto_pai_id
+        LEFT JOIN vendas_contabilizadas v
+            ON v.variacao_id = var.id
+            {where_month}
+        WHERE var.ativo = 1
+        GROUP BY var.id, pp.nome, var.nome_variacao, var.sku, var.tipo_produto
+        ORDER BY pp.nome, var.nome_variacao
+        """,
+        params,
+    )
+    for row in rows:
+        unidades = float(row.get("unidades_vendidas") or 0)
+        faturamento = float(row.get("faturamento") or 0)
+        lucro = float(row.get("lucro") or 0)
+        custo_total = float(row.get("custo_total") or 0)
+        row["preco_medio_vendido"] = faturamento / unidades if unidades else 0
+        row["margem"] = lucro / faturamento * 100 if faturamento else 0
+        row["lucro_por_unidade"] = lucro / unidades if unidades else 0
+        row["custo_sobre_faturamento"] = custo_total / faturamento * 100 if faturamento else 0
+    return rows
+
+
 def save_variation_cost(variacao_id: int, custo_unitario: float, origem_custo: str = "manual") -> None:
     """Salva o custo atual da variação e recalcula vendas abertas.
 
