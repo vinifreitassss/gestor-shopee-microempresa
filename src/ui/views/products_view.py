@@ -28,7 +28,7 @@ class ProductsView(ctk.CTkFrame):
         ctk.CTkButton(controls, text="Atualizar", command=self.refresh).pack(side="left", padx=8, pady=8)
         ctk.CTkLabel(
             controls,
-            text="Use preço médio, margem e lucro/unidade para decidir cupom e desconto.",
+            text="Cupom máx. é uma referência aproximada baseada no lucro por unidade do mês.",
             text_color="gray",
         ).pack(side="left", padx=16, pady=8)
 
@@ -36,17 +36,18 @@ class ProductsView(ctk.CTkFrame):
             self,
             [
                 ("id", "ID", 55),
-                ("produto_pai", "Produto pai", 270),
-                ("nome_variacao", "Variação", 230),
-                ("sku", "SKU", 100),
-                ("custo_unitario", "Custo atual", 100),
-                ("preco_medio_vendido", "Preço vendido", 115),
-                ("unidades_vendidas", "Unid.", 70),
-                ("faturamento", "Faturamento", 115),
-                ("lucro", "Lucro", 105),
-                ("margem", "Margem", 85),
-                ("lucro_por_unidade", "Lucro/un.", 95),
-                ("pendencias", "Pend.", 65),
+                ("produto_pai", "Produto pai", 250),
+                ("nome_variacao", "Variação", 210),
+                ("sku", "SKU", 90),
+                ("custo_unitario", "Custo atual", 95),
+                ("preco_medio_vendido", "Preço vendido", 105),
+                ("unidades_vendidas", "Unid.", 65),
+                ("faturamento", "Faturamento", 105),
+                ("lucro", "Lucro", 100),
+                ("margem", "Margem", 80),
+                ("lucro_por_unidade", "Lucro/un.", 90),
+                ("cupom_teto", "Cupom máx.", 95),
+                ("pendencias", "Pend.", 60),
             ],
             height=24,
         )
@@ -56,6 +57,8 @@ class ProductsView(ctk.CTkFrame):
         rows = []
         month = self.month_var.get().strip()
         for row in list_variations_with_sales_metrics(month):
+            lucro_por_unidade = float(row["lucro_por_unidade"] or 0)
+            cupom_teto = max(lucro_por_unidade, 0)
             rows.append(
                 {
                     "id": row["id"],
@@ -68,7 +71,8 @@ class ProductsView(ctk.CTkFrame):
                     "faturamento": brl(row["faturamento"]),
                     "lucro": brl(row["lucro"]),
                     "margem": percent(row["margem"]),
-                    "lucro_por_unidade": brl(row["lucro_por_unidade"]),
+                    "lucro_por_unidade": brl(lucro_por_unidade),
+                    "cupom_teto": brl(cupom_teto),
                     "pendencias": int(row.get("pendencias") or 0),
                 }
             )
