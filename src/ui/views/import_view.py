@@ -12,13 +12,14 @@ from src.services.financial_import_service import (
 )
 from src.services.import_service import (
     delete_importation,
+    find_importations_same_month,
     find_importations_same_period,
     list_importations,
     save_importation,
 )
 from src.ui.components import SimpleTable
 from src.ui.theme import PAD
-from src.utils import brl
+from src.utils import brl, mes_referencia_from_date
 
 
 REPORT_OPTIONS = {
@@ -135,23 +136,43 @@ class ImportView(ctk.CTkFrame):
 
         tipo = self.tipo_var.get().strip()
         report_type = self._report_type()
-        duplicates = find_importations_same_period(tipo, data_inicio, data_fim) if report_type == "performance" else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
-
+        mes_ref = mes_referencia_from_date(data_inicio)
         mode = "somar"
-        if duplicates:
-            replace = messagebox.askyesno("Importação já existe", "Já existe importação confirmada para esse tipo de relatório e período.\n\nSim = substituir anterior\nNão = cancelar")
-            if not replace:
-                return
-            for duplicate in duplicates:
-                delete_importation(int(duplicate["id"]))
-            mode = "somar"
+        replaced_count = 0
+
+        if tipo == "mensal":
+            duplicates = find_importations_same_month(report_type, tipo, mes_ref)
+            if duplicates:
+                replace = messagebox.askyesno(
+                    "Importação mensal já existe",
+                    f"Já existe {len(duplicates)} importação mensal para esse relatório em {mes_ref}.\n\n"
+                    "Sim = substituir a mensal anterior por esta nova\nNão = cancelar",
+                )
+                if not replace:
+                    return
+                for duplicate in duplicates:
+                    delete_importation(int(duplicate["id"]))
+                replaced_count = len(duplicates)
+        else:
+            duplicates = find_importations_same_period(tipo, data_inicio, data_fim) if report_type == "performance" else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
+            if duplicates:
+                replace = messagebox.askyesno("Importação já existe", "Já existe importação confirmada para esse tipo de relatório e período.\n\nSim = substituir anterior\nNão = cancelar")
+                if not replace:
+                    return
+                for duplicate in duplicates:
+                    delete_importation(int(duplicate["id"]))
+                replaced_count = len(duplicates)
 
         try:
             if report_type == "performance":
                 import_id = save_importation(path, tipo, data_inicio, data_fim, mode=mode)
             else:
                 import_id = save_financial_importation(path, report_type, tipo, data_inicio, data_fim, mode=mode)
-            messagebox.showinfo("Importação concluída", f"Importação salva com ID {import_id}.")
+            message = f"Importação salva com ID {import_id}."
+            if replaced_count:
+                message += f"\n\nSubstituiu {replaced_count} importação(ões) anterior(es)."
+            messagebox.showinfo("Importação concluída", message)
+            self.status_var.set(message.replace("\n", " "))
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Erro", f"Não foi possível importar:\n{exc}")
