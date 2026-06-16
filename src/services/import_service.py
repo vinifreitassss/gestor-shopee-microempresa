@@ -19,6 +19,7 @@ def save_importation(
 
     mode aceita:
     - substituir: apaga importações confirmadas no mesmo período antes de salvar;
+    - substituir_mes: apaga importações mensais confirmadas do mesmo mês antes de salvar;
     - somar: mantém o que existe e adiciona nova importação.
     """
     path = Path(file_path)
@@ -27,7 +28,21 @@ def save_importation(
     lines = importer.preview(path)
 
     with get_connection() as conn:
-        if mode == "substituir":
+        if mode == "substituir_mes":
+            existing = conn.execute(
+                """
+                SELECT id FROM importacoes
+                WHERE tipo_relatorio = 'performance'
+                  AND tipo_periodo = ?
+                  AND mes_referencia = ?
+                  AND status = 'confirmada'
+                """,
+                (tipo_periodo, mes_ref),
+            ).fetchall()
+            for row in existing:
+                conn.execute("DELETE FROM importacoes WHERE id = ?", (row["id"],))
+
+        elif mode == "substituir":
             existing = conn.execute(
                 """
                 SELECT id FROM importacoes
@@ -318,4 +333,18 @@ def find_importations_same_period(tipo_periodo: str, data_inicio: date, data_fim
         ORDER BY criado_em DESC
         """,
         (tipo_periodo, data_inicio.isoformat(), data_fim.isoformat()),
+    )
+
+
+def find_importations_same_month(report_type: str, tipo_periodo: str, mes_referencia: str) -> list[dict]:
+    return fetch_all(
+        """
+        SELECT * FROM importacoes
+        WHERE tipo_relatorio = ?
+          AND tipo_periodo = ?
+          AND mes_referencia = ?
+          AND status = 'confirmada'
+        ORDER BY criado_em DESC
+        """,
+        (report_type, tipo_periodo, mes_referencia),
     )
