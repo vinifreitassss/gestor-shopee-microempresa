@@ -60,6 +60,9 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
         transactions = importer.preview_transactions(file_path)
         entradas = sum(t.valor for t in transactions if normalize_text(t.direcao) == "entrada")
         saques = sum(abs(t.valor) for t in transactions if t.is_saque)
+        ads = sum(abs(t.valor) for t in transactions if t.is_ads and t.valor < 0)
+        ajustes_pedido = sum(abs(t.valor) for t in transactions if t.is_ajuste_desconto_pedido)
+        debitos_sem_saque = sum(abs(t.valor) for t in transactions if t.is_saida_sem_saque)
         pedidos = sum(1 for t in transactions if t.is_entrada_com_pedido)
         rows = [
             {
@@ -68,7 +71,7 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
                 "data": transaction.data_movimento,
                 "valor": transaction.valor,
                 "liquido": transaction.balanca_apos_transacoes,
-                "obs": transaction.direcao,
+                "obs": _transaction_obs(transaction),
             }
             for transaction in transactions[:200]
         ]
@@ -76,8 +79,12 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
             "report_type": report_type,
             "count": len(transactions),
             "valor_total": entradas,
-            "valor_liquido": entradas - saques,
+            "valor_liquido": entradas - saques - debitos_sem_saque,
             "taxas": saques,
+            "saques": saques,
+            "ads": ads,
+            "ajustes_pedido": ajustes_pedido,
+            "debitos_sem_saque": debitos_sem_saque,
             "pedidos": pedidos,
             "rows": rows,
         }
@@ -318,6 +325,53 @@ def _save_transactions(
                 ),
             )
 
+        if transaction.is_ads and transaction.valor < 0:
+            _save_ads_expense(conn, importacao_id, transaction, timestamp)
+
+
+def _save_ads_expense(
+    conn: sqlite3.Connection,
+    importacao_id: int,
+    transaction: BalanceTransaction,
+    timestamp: str,
+) -> None:
+    expense_date = str(transaction.data_movimento or "")[:10]
+    if not expense_date:
+        return
+    try:
+        mes_ref = mes_referencia_from_date(date.fromisoformat(expense_date))
+    except ValueError:
+        return
+
+    reference = (
+        f"shopee_ads:{transaction.data_movimento}:"
+        f"{transaction.valor}:{transaction.balanca_apos_transacoes}"
+    )
+    exists = conn.execute(
+        "SELECT id FROM despesas WHERE origem_referencia = ? LIMIT 1",
+        (reference,),
+    ).fetchone()
+    if exists:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO despesas (
+            data, mes_referencia, categoria, descricao, valor,
+            incide_dre, origem_importacao_id, origem_referencia, criado_em
+        ) VALUES (?, ?, 'Shopee Ads', ?, ?, 1, ?, ?, ?)
+        """,
+        (
+            expense_date,
+            mes_ref,
+            transaction.descricao or "Recarga por compra de ADS",
+            abs(transaction.valor),
+            importacao_id,
+            reference,
+            timestamp,
+        ),
+    )
+
 
 def _find_transaction_id(conn: sqlite3.Connection, transaction: BalanceTransaction) -> int | None:
     row = conn.execute(
@@ -374,7 +428,6 @@ def _reconcile_all_orders(conn: sqlite3.Connection) -> None:
         FROM shopee_transacoes
         WHERE pedido_id IS NOT NULL
           AND TRIM(pedido_id) <> ''
-          AND LOWER(direcao) = 'entrada'
           AND LOWER(tipo_transacao) NOT LIKE '%saque%'
         GROUP BY pedido_id
         """
@@ -422,6 +475,9 @@ def _reconcile_all_orders(conn: sqlite3.Connection) -> None:
         UPDATE shopee_transacoes
         SET status_conciliacao = CASE
             WHEN LOWER(tipo_transacao) LIKE '%saque%' THEN 'saque'
+            WHEN LOWER(tipo_transacao || ' ' || descricao) LIKE '%ads%' THEN 'shopee_ads'
+            WHEN pedido_id IS NOT NULL AND TRIM(pedido_id) <> ''
+                 AND LOWER(direcao) <> 'entrada' THEN 'ajuste_pedido'
             WHEN pedido_id IS NULL OR TRIM(pedido_id) = '' THEN 'sem_pedido'
             WHEN EXISTS (
                 SELECT 1 FROM shopee_pedidos_financeiros p
@@ -431,3 +487,13 @@ def _reconcile_all_orders(conn: sqlite3.Connection) -> None:
         END
         """
     )
+
+
+def _transaction_obs(transaction: BalanceTransaction) -> str:
+    if transaction.is_saque:
+        return "saque para banco"
+    if transaction.is_ads:
+        return "Shopee Ads / despesa DRE"
+    if transaction.is_ajuste_desconto_pedido:
+        return "desconto/ajuste do pedido"
+    return transaction.direcao
