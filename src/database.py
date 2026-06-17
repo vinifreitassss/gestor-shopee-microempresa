@@ -193,8 +193,11 @@ def init_database() -> None:
                 valor REAL NOT NULL,
                 incide_dre INTEGER NOT NULL DEFAULT 1,
                 recorrente_id INTEGER,
+                origem_importacao_id INTEGER,
+                origem_referencia TEXT DEFAULT '',
                 criado_em TEXT NOT NULL,
-                FOREIGN KEY (recorrente_id) REFERENCES despesas_recorrentes(id)
+                FOREIGN KEY (recorrente_id) REFERENCES despesas_recorrentes(id),
+                FOREIGN KEY (origem_importacao_id) REFERENCES importacoes(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS despesas_recorrentes (
@@ -328,6 +331,8 @@ def init_database() -> None:
         _ensure_column(conn, "insumos", "referencia_uso_custo", "TEXT DEFAULT ''")
         _ensure_column(conn, "shopee_pedidos_financeiros", "numero_rastreio", "TEXT DEFAULT ''")
         _ensure_column(conn, "despesas", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "despesas", "origem_importacao_id", "INTEGER")
+        _ensure_column(conn, "despesas", "origem_referencia", "TEXT DEFAULT ''")
         _ensure_column(conn, "despesas_recorrentes", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
 
         for key, value in DEFAULT_SETTINGS.items():
