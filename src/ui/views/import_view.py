@@ -24,7 +24,7 @@ from src.utils import brl, mes_referencia_from_date
 
 REPORT_OPTIONS = {
     "Vendas / desempenho": "performance",
-    "Pedidos enviados": "pedidos_enviados",
+    "Pedidos a enviar / consolidar": "pedidos_enviados",
     "Pagamentos / saques Shopee": "pagamentos_shopee",
 }
 
@@ -107,7 +107,7 @@ class ImportView(ctk.CTkFrame):
                 ("data", "Data", 140),
                 ("valor", "Valor bruto", 130),
                 ("liquido", "Líquido / saldo", 130),
-                ("obs", "Obs.", 190),
+                ("obs", "Obs.", 220),
             ],
             height=9,
         )
@@ -152,9 +152,12 @@ class ImportView(ctk.CTkFrame):
         tipo = self.tipo_var.get().strip()
         data_inicio = self.data_inicio_var.get().strip()
         data_fim = self.data_fim_var.get().strip()
+        extra = ""
+        if REPORT_OPTIONS.get(report_label) == "pedidos_enviados":
+            extra = " | modo: consolidar snapshot diário, sem substituir histórico"
         self.summary_var.set(
             "Esta planilha será plugada no app como: "
-            f"{report_label} | período {tipo} | de {data_inicio} até {data_fim} | arquivo: {arquivo}"
+            f"{report_label} | período {tipo} | de {data_inicio} até {data_fim} | arquivo: {arquivo}{extra}"
         )
 
     def preview(self) -> None:
@@ -189,9 +192,17 @@ class ImportView(ctk.CTkFrame):
         rows = [{**row, "valor": brl(row.get("valor")), "liquido": brl(row.get("liquido"))} for row in preview["rows"]]
         self.preview_table.set_rows(rows)
         if report_type == "pedidos_enviados":
-            self.status_var.set(f"{preview['count']} pedidos únicos. Com rastreio: {preview.get('pedidos_com_rastreio', 0)}. Sem rastreio: {preview.get('pedidos_sem_rastreio', 0)}. Aberto futuro líquido: {brl(preview.get('saldo_possivel_aberto', 0))}. Entra em espera: {brl(preview['valor_liquido'])}.")
+            self.status_var.set(
+                f"{preview['count']} pedidos no snapshot. Todos entram/ficam em aberto futuro: "
+                f"{brl(preview.get('saldo_possivel_aberto', 0))}. "
+                "Pedidos abertos que sumirem no próximo snapshot serão movidos para Shopee em espera."
+            )
         else:
-            self.status_var.set(f"{preview['count']} transações. Entradas: {brl(preview['valor_total'])}. Saques: {brl(preview['taxas'])}.")
+            self.status_var.set(
+                f"{preview['count']} transações. Entradas: {brl(preview['valor_total'])}. "
+                f"Saques: {brl(preview.get('saques', preview.get('taxas', 0)))}. "
+                f"Ads: {brl(preview.get('ads', 0))}. Ajustes: {brl(preview.get('ajustes_pedido', 0))}."
+            )
 
     def confirm_import(self) -> None:
         path = self.file_path_var.get().strip()
@@ -212,14 +223,19 @@ class ImportView(ctk.CTkFrame):
         mode = "somar"
         duplicates = []
 
-        if tipo == "mensal":
-            duplicates = find_importations_same_month(report_type, tipo, mes_ref)
+        if report_type == "pedidos_enviados":
+            replacement_text = (
+                "\n\nModo consolidação: esta planilha NÃO substituirá as antigas. "
+                "Ela atualiza pedidos atuais como aberto futuro e move para em espera os pedidos abertos que sumiram do snapshot."
+            )
         else:
-            duplicates = find_importations_same_period(tipo, data_inicio, data_fim) if report_type == "performance" else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
-
-        replacement_text = ""
-        if duplicates:
-            replacement_text = f"\n\nAtenção: serão substituída(s) {len(duplicates)} importação(ões) anterior(es) desse mesmo tipo/período."
+            if tipo == "mensal":
+                duplicates = find_importations_same_month(report_type, tipo, mes_ref)
+            else:
+                duplicates = find_importations_same_period(tipo, data_inicio, data_fim) if report_type == "performance" else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
+            replacement_text = ""
+            if duplicates:
+                replacement_text = f"\n\nAtenção: serão substituída(s) {len(duplicates)} importação(ões) anterior(es) desse mesmo tipo/período."
 
         ok = messagebox.askyesno(
             "Confirmar importação",
@@ -246,6 +262,8 @@ class ImportView(ctk.CTkFrame):
             else:
                 import_id = save_financial_importation(path, report_type, tipo, data_inicio, data_fim, mode=mode)
             message = f"Importação salva com ID {import_id}."
+            if report_type == "pedidos_enviados":
+                message += "\n\nConsolidação aplicada. Histórico anterior preservado."
             if replaced_count:
                 message += f"\n\nSubstituiu {replaced_count} importação(ões) anterior(es)."
             messagebox.showinfo("Importação concluída", message)
