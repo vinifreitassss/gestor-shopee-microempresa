@@ -202,14 +202,6 @@ def _consolidate_orders_snapshot(
     orders: list[FinancialOrder],
     snapshot_date: date,
 ) -> None:
-    """Consolida a lista diária de pedidos a enviar.
-
-    Regra de negócio:
-    - Todo pedido que aparece no snapshot atual fica em aberto futuro.
-    - Pedido que estava em aberto futuro e sumiu do snapshot atual é considerado enviado
-      e passa para Shopee em espera.
-    - Pedido já liberado/divergente/cancelado não é reaberto.
-    """
     timestamp = now_iso()
     valid_orders = [order for order in orders if not order.esta_cancelado]
     current_ids = {order.pedido_id for order in valid_orders if order.pedido_id}
@@ -219,7 +211,7 @@ def _consolidate_orders_snapshot(
 
     if current_ids:
         placeholders = ",".join("?" for _ in current_ids)
-        params = [snapshot_date.isoformat(), SNAPSHOT_SENT_TRACKING, snapshot_date.isoformat(), timestamp, *current_ids]
+        params = [SNAPSHOT_SENT_TRACKING, snapshot_date.isoformat(), timestamp, *current_ids]
         conn.execute(
             f"""
             UPDATE shopee_pedidos_financeiros
