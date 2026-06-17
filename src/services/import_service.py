@@ -176,6 +176,7 @@ def delete_importation(importacao_id: int) -> bool:
             return True
 
         if report_type == "pagamentos_shopee":
+            conn.execute("DELETE FROM despesas WHERE origem_importacao_id = ?", (importacao_id,))
             conn.execute("DELETE FROM shopee_saques WHERE importacao_id = ?", (importacao_id,))
             conn.execute("DELETE FROM shopee_transacoes WHERE importacao_id = ?", (importacao_id,))
             conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
