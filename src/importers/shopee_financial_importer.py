@@ -75,6 +75,19 @@ class BalanceTransaction:
         return "saque" in text or "withdraw" in text
 
     @property
+    def is_ads(self) -> bool:
+        text = normalize_text(f"{self.tipo_transacao} {self.descricao}")
+        return "ads" in text or "anuncio" in text or "anúncio" in text
+
+    @property
+    def is_saida_sem_saque(self) -> bool:
+        return normalize_text(self.direcao) == "saida" and not self.is_saque
+
+    @property
+    def is_ajuste_desconto_pedido(self) -> bool:
+        return bool(self.pedido_id) and self.is_saida_sem_saque
+
+    @property
     def is_entrada_com_pedido(self) -> bool:
         return bool(self.pedido_id) and normalize_text(self.direcao) == "entrada" and not self.is_saque
 
@@ -84,7 +97,7 @@ class ShopeeFinancialImporter:
 
     - Pedidos a enviar: atualiza a lista de pedidos e valores estimados.
     - Só pedidos com rastreio entram em Shopee em espera.
-    - Relatório de pagamento: confirma entradas liberadas e saques.
+    - Relatório de pagamento: confirma entradas liberadas, ajustes/descontos, Ads e saques.
     """
 
     ORDER_COLUMNS = {
@@ -259,67 +272,58 @@ class ShopeeFinancialImporter:
         best_df.columns = [str(col).strip() for col in best_df.columns]
         return best_df
 
-    def _detect_header_row(self, raw: pd.DataFrame, rules: dict[str, tuple[str, ...]]) -> tuple[int | None, int]:
-        max_rows = min(len(raw), 40)
-        best_row: int | None = None
+    def _detect_header_row(self, df: pd.DataFrame, rules: dict[str, tuple[str, ...]]) -> tuple[int | None, int]:
+        best_row = None
         best_score = -1
-
-        for idx in range(max_rows):
-            values = [normalize_text(value) for value in raw.iloc[idx].tolist()]
-            joined = " | ".join(values)
+        for index, row in df.head(30).iterrows():
+            normalized = [normalize_text(value) for value in row.tolist()]
             score = 0
             for candidates in rules.values():
-                if any(normalize_text(candidate) in joined for candidate in candidates):
+                if any(any(candidate in cell for cell in normalized) for candidate in candidates):
                     score += 1
             if score > best_score:
-                best_row = idx
+                best_row = int(index)
                 best_score = score
-
         return best_row, best_score
 
-    def _map_columns(self, columns: Any, rules: dict[str, tuple[str, ...]]) -> dict[str, str]:
-        normalized_columns = [(normalize_text(col), str(col)) for col in columns]
+    def _map_columns(self, columns: list[str], rules: dict[str, tuple[str, ...]]) -> dict[str, str]:
+        normalized_columns = {normalize_text(col): col for col in columns}
         mapping: dict[str, str] = {}
-
-        for target, candidates in rules.items():
-            normalized_candidates = [normalize_text(candidate) for candidate in candidates]
-            for candidate in normalized_candidates:
-                for normalized, original in normalized_columns:
-                    if normalized == candidate or candidate in normalized:
-                        mapping[target] = original
-                        break
-                if target in mapping:
+        for field, candidates in rules.items():
+            for candidate in candidates:
+                candidate_norm = normalize_text(candidate)
+                if candidate_norm in normalized_columns:
+                    mapping[field] = normalized_columns[candidate_norm]
                     break
         return mapping
 
     def _require(self, mapping: dict[str, str], fields: list[str]) -> None:
         missing = [field for field in fields if field not in mapping]
         if missing:
-            raise ShopeeImportError("Colunas obrigatórias não encontradas: " + ", ".join(missing))
+            raise ShopeeImportError(f"Colunas obrigatórias não encontradas: {', '.join(missing)}")
 
-    def _get(self, row: pd.Series, mapping: dict[str, str], field: str) -> str:
+    def _get(self, row: Any, mapping: dict[str, str], field: str) -> str:
         column = mapping.get(field)
         if not column:
             return ""
-        value = row.get(column, "")
-        if pd.isna(value):
-            return ""
-        return str(value).strip()
-
-    def _to_iso_datetime(self, value: object) -> str:
+        value = row.get(column)
         if value is None:
             return ""
-        text = str(value).strip()
-        if not text or text.lower() in {"nan", "none", "nat", "-", "--"}:
+        if pd.isna(value):
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+
+    def _to_iso_datetime(self, value: str) -> str:
+        if not value:
             return ""
         try:
-            parsed = pd.to_datetime(text, errors="coerce")
+            parsed = pd.to_datetime(value)
         except Exception:
-            return text
+            return str(value)
         if pd.isna(parsed):
-            return text
-
-        dt = parsed.to_pydatetime()
-        if isinstance(dt, datetime):
-            return dt.isoformat(timespec="seconds")
-        return str(dt)
+            return ""
+        if isinstance(parsed, datetime):
+            return parsed.isoformat(sep=" ", timespec="seconds")
+        return str(parsed)
