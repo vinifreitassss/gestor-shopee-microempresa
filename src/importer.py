@@ -25,7 +25,12 @@ class ShopeeImportError(Exception):
 
 
 class ShopeeImporter:
-    """Leitor tolerante para relatórios de desempenho da Shopee."""
+    """Leitor tolerante para relatórios de desempenho da Shopee.
+
+    Regra importante:
+    - Produtos com variações: contabiliza somente linhas de variação, para não duplicar o pai.
+    - Produtos sem variações: contabiliza a própria linha pai como "Sem variação".
+    """
 
     SHEET_HINTS = ("produtos com melhor desempenho", "melhor desempenho", "produtos")
 
@@ -60,12 +65,15 @@ class ShopeeImporter:
         column_map = self._map_columns(df.columns)
         self._validate_minimum_columns(column_map)
 
-        imported: list[ImportedLine] = []
+        raw_lines: list[dict] = []
+        product_keys_with_variation: set[str] = set()
+
         for _, row in df.iterrows():
             product_name = self._get(row, column_map, "produto_nome")
             if not product_name or normalize_text(product_name) in {"nan", "none"}:
                 continue
 
+            item_id = self._get(row, column_map, "id_item_shopee")
             variation_id = self._get(row, column_map, "id_variacao_shopee")
             variation_name = self._get(row, column_map, "variacao_nome")
             sku = self._get(row, column_map, "sku_variacao")
@@ -73,18 +81,54 @@ class ShopeeImporter:
             units = int_to_safe(self._get(row, column_map, "unidades_pedido_pago"))
 
             is_variation = self._is_real_variation(variation_id, variation_name, sku)
-            should_count = is_variation and units > 0 and revenue > 0
+            product_key = self._product_key(item_id, product_name)
+            if is_variation:
+                product_keys_with_variation.add(product_key)
+
+            raw_lines.append(
+                {
+                    "item_id": item_id,
+                    "product_name": product_name,
+                    "variation_id": variation_id,
+                    "variation_name": variation_name,
+                    "sku": sku,
+                    "revenue": revenue,
+                    "units": units,
+                    "is_variation": is_variation,
+                    "product_key": product_key,
+                }
+            )
+
+        imported: list[ImportedLine] = []
+        for line in raw_lines:
+            is_variation = bool(line["is_variation"])
+            has_variation_children = str(line["product_key"]) in product_keys_with_variation
+            units = int(line["units"] or 0)
+            revenue = float(line["revenue"] or 0)
+
+            if is_variation:
+                tipo_linha = "variacao"
+                variation_name = str(line["variation_name"] or "Sem variação")
+                should_count = units > 0 and revenue > 0
+            elif not has_variation_children:
+                tipo_linha = "produto_sem_variacao"
+                variation_name = "Sem variação"
+                should_count = units > 0 and revenue > 0
+            else:
+                tipo_linha = "produto_pai"
+                variation_name = str(line["variation_name"] or "Sem variação")
+                should_count = False
 
             imported.append(
                 ImportedLine(
-                    id_item_shopee=self._get(row, column_map, "id_item_shopee"),
-                    produto_nome=product_name,
-                    id_variacao_shopee=variation_id,
-                    variacao_nome=variation_name or "Sem variação",
-                    sku_variacao=sku,
+                    id_item_shopee=str(line["item_id"] or ""),
+                    produto_nome=str(line["product_name"]),
+                    id_variacao_shopee=str(line["variation_id"] or ""),
+                    variacao_nome=variation_name,
+                    sku_variacao=str(line["sku"] or ""),
                     vendas_pedido_pago=revenue,
                     unidades_pedido_pago=units,
-                    tipo_linha="variacao" if is_variation else "produto_pai",
+                    tipo_linha=tipo_linha,
                     contabilizar=should_count,
                 )
             )
@@ -92,6 +136,12 @@ class ShopeeImporter:
         if not imported:
             raise ShopeeImportError("Nenhuma linha de produto foi encontrada.")
         return imported
+
+    def _product_key(self, item_id: str, product_name: str) -> str:
+        normalized_id = normalize_text(item_id)
+        if normalized_id and normalized_id not in {"-", "--", "nan", "none"}:
+            return f"id:{normalized_id}"
+        return f"nome:{normalize_text(product_name)}"
 
     def _find_sheet(self, path: Path) -> str:
         try:
