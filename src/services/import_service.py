@@ -275,12 +275,29 @@ def _upsert_parent_product(conn, id_item_shopee: str, name: str) -> int:
 
 
 def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_name: str, sku: str) -> int:
+    variation_name = variation_name or "Sem variação"
+    sku = sku or ""
     existing = None
+
     if variation_id:
         existing = conn.execute(
             "SELECT id FROM variacoes WHERE id_variacao_shopee = ?",
             (variation_id,),
         ).fetchone()
+    else:
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM variacoes
+            WHERE produto_pai_id = ?
+              AND id_variacao_shopee IS NULL
+              AND nome_variacao = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (produto_pai_id, variation_name),
+        ).fetchone()
+
     if existing:
         conn.execute(
             """
@@ -290,7 +307,7 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
                 sku = COALESCE(NULLIF(?, ''), sku)
             WHERE id = ?
             """,
-            (produto_pai_id, variation_name or "Sem variação", sku or "", existing["id"]),
+            (produto_pai_id, variation_name, sku, existing["id"]),
         )
         return int(existing["id"])
 
@@ -301,7 +318,7 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
             tipo_produto, ativo, criado_em
         ) VALUES (?, ?, ?, ?, 'pronto', 1, ?)
         """,
-        (produto_pai_id, variation_id or None, variation_name or "Sem variação", sku or None, now_iso()),
+        (produto_pai_id, variation_id or None, variation_name, sku or None, now_iso()),
     )
     return int(cursor.lastrowid)
 
