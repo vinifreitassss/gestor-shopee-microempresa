@@ -7,6 +7,7 @@ from src.database import init_database
 from src.services.cashflow_service import (
     get_cashflow_summary,
     get_initial_position,
+    list_cashflow_audit,
     list_cashflow_events,
     list_daily_cashflow_forecast,
     list_shopee_pipeline,
@@ -15,7 +16,7 @@ from src.services.cashflow_service import (
 from src.services.reports_service import current_month_reference
 from src.ui.components import MetricCard, SimpleTable
 from src.ui.theme import PAD
-from src.utils import brl, money_to_float, percent
+from src.utils import brl, money_to_float
 
 
 class CashFlowView(ctk.CTkFrame):
@@ -44,7 +45,7 @@ class CashFlowView(ctk.CTkFrame):
         header = ctk.CTkFrame(self)
         header.pack(fill="x", padx=PAD, pady=PAD)
         ctk.CTkLabel(header, text="Fluxo de Caixa", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
-        ctk.CTkLabel(header, text="Mês:").pack(side="left", padx=(24, 6))
+        ctk.CTkLabel(header, text="Mês visual:").pack(side="left", padx=(24, 6))
         ctk.CTkEntry(header, textvariable=self.month_var, width=90).pack(side="left", padx=6)
         ctk.CTkButton(header, text="Atualizar", command=self.refresh).pack(side="left", padx=8)
 
@@ -58,10 +59,12 @@ class CashFlowView(ctk.CTkFrame):
         self.summary_tab = self.tabs.add("Resumo")
         self.daily_tab = self.tabs.add("Fluxo diário")
         self.details_tab = self.tabs.add("Detalhes")
+        self.audit_tab = self.tabs.add("Auditoria")
 
         self._build_summary_tab(self.summary_tab)
         self._build_daily_tab(self.daily_tab)
         self._build_details_tab(self.details_tab)
+        self._build_audit_tab(self.audit_tab)
 
     def _build_initial_position_box(self) -> None:
         box = ctk.CTkFrame(self)
@@ -71,9 +74,9 @@ class CashFlowView(ctk.CTkFrame):
         ctk.CTkEntry(box, textvariable=self.cutoff_var, width=120).grid(row=1, column=1, padx=8, pady=8)
         ctk.CTkLabel(box, text="Banco:").grid(row=1, column=2, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.bank_var, width=110).grid(row=1, column=3, padx=8, pady=8)
-        ctk.CTkLabel(box, text="Caixa Shopee:").grid(row=1, column=4, padx=8, pady=8)
+        ctk.CTkLabel(box, text="Caixa Shopee inicial:").grid(row=1, column=4, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.shopee_cash_var, width=110).grid(row=1, column=5, padx=8, pady=8)
-        ctk.CTkLabel(box, text="Shopee em espera:").grid(row=1, column=6, padx=8, pady=8)
+        ctk.CTkLabel(box, text="Espera inicial:").grid(row=1, column=6, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.shopee_waiting_var, width=110).grid(row=1, column=7, padx=8, pady=8)
         ctk.CTkButton(box, text="Salvar posição inicial", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
 
@@ -93,6 +96,10 @@ class CashFlowView(ctk.CTkFrame):
             ("caixa_livre_estimado", "Caixa livre estimado"),
             ("despesas", "Despesas no mês"),
             ("imposto_reservado", "Imposto reservado"),
+            ("saldo_shopee_relatorio", "Saldo oficial Shopee"),
+            ("diferenca_caixa_shopee", "Dif. caixa Shopee"),
+            ("pagamentos_sem_cadastro", "Entradas sem cadastro"),
+            ("shopee_ads", "Shopee Ads"),
         ]
         for idx, (key, title) in enumerate(metric_defs):
             card = MetricCard(metrics, title)
@@ -178,6 +185,26 @@ class CashFlowView(ctk.CTkFrame):
         )
         self.events_table.pack(fill="both", expand=True, padx=8, pady=8)
 
+    def _build_audit_tab(self, parent) -> None:
+        ctk.CTkLabel(
+            parent,
+            text="Auditoria: confira o saldo oficial da carteira Shopee, o saldo reconstruído e os valores que não devem mexer automaticamente no em espera.",
+            text_color="gray",
+            wraplength=980,
+            justify="left",
+        ).pack(anchor="w", padx=8, pady=(8, 4))
+        self.audit_table = SimpleTable(
+            parent,
+            [
+                ("grupo", "Grupo", 150),
+                ("item", "Item", 230),
+                ("valor", "Valor", 140),
+                ("obs", "Observação", 520),
+            ],
+            height=18,
+        )
+        self.audit_table.pack(fill="both", expand=True, padx=8, pady=8)
+
     def _load_initial_position(self) -> None:
         try:
             position = get_initial_position()
@@ -222,6 +249,10 @@ class CashFlowView(ctk.CTkFrame):
             "saldo_shopee_espera": saldo_espera,
             "saldo_possivel_aberto": 0,
             "pedidos_em_aberto": 0,
+            "saldo_shopee_relatorio": saldo_shopee,
+            "diferenca_caixa_shopee": 0,
+            "pagamentos_sem_cadastro": 0,
+            "shopee_ads": 0,
             "disponibilidades": disponibilidades,
             "total_dinheiro_gerencial": total,
             "caixa_livre_estimado": disponibilidades,
@@ -266,10 +297,20 @@ class CashFlowView(ctk.CTkFrame):
             errors.append(f"Movimentações: {exc}")
             self.events_table.set_rows([])
 
+        try:
+            audit = list_cashflow_audit(month)
+            self._render_audit(audit)
+        except Exception as exc:
+            errors.append(f"Auditoria: {exc}")
+            self.audit_table.set_rows([])
+
         if errors:
             self.status_var.set(" | ".join(errors))
         else:
-            self.status_var.set(f"Período calculado: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}.")
+            self.status_var.set(
+                f"Período visual: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}. "
+                f"Caixa Shopee usa saldo oficial da carteira quando disponível."
+            )
 
     def _render_summary(self, summary: dict) -> None:
         money_fields = {
@@ -283,6 +324,10 @@ class CashFlowView(ctk.CTkFrame):
             "caixa_livre_estimado",
             "despesas",
             "imposto_reservado",
+            "saldo_shopee_relatorio",
+            "diferenca_caixa_shopee",
+            "pagamentos_sem_cadastro",
+            "shopee_ads",
         }
         for key, card in self.cards.items():
             value = summary.get(key)
@@ -345,3 +390,17 @@ class CashFlowView(ctk.CTkFrame):
                 }
             )
         self.events_table.set_rows(rows)
+
+    def _render_audit(self, audit_rows: list[dict]) -> None:
+        rows = []
+        for row in audit_rows:
+            value = row.get("valor")
+            rows.append(
+                {
+                    "grupo": row.get("grupo", ""),
+                    "item": row.get("item", ""),
+                    "valor": brl(value) if row.get("tipo") == "money" else str(value if value not in (None, "") else "-"),
+                    "obs": row.get("obs", ""),
+                }
+            )
+        self.audit_table.set_rows(rows)
