@@ -81,25 +81,23 @@ class CashFlowView(ctk.CTkFrame):
         ctk.CTkButton(box, text="Salvar posição inicial", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
 
     def _build_summary_tab(self, parent) -> None:
+        ctk.CTkLabel(
+            parent,
+            text="Visão resumida da esteira: pedido aberto → em espera → carteira Shopee → banco. Detalhes ficam na aba Auditoria.",
+            text_color="gray",
+        ).pack(anchor="w", padx=8, pady=(8, 0))
+
         metrics = ctk.CTkFrame(parent)
         metrics.pack(fill="x", padx=8, pady=8)
         metric_defs = [
             ("total_dinheiro_gerencial", "Total gerencial"),
             ("disponibilidades", "Disponibilidades"),
-            ("menor_disponibilidade", "Menor disponibilidade"),
-            ("dia_critico", "Dia crítico"),
             ("saldo_banco", "Banco"),
             ("saldo_shopee_disponivel", "Caixa Shopee"),
             ("saldo_shopee_espera", "Shopee em espera"),
             ("saldo_possivel_aberto", "Aberto futuro"),
-            ("pedidos_em_aberto", "Pedidos sem rastreio"),
-            ("caixa_livre_estimado", "Caixa livre estimado"),
             ("despesas", "Despesas no mês"),
             ("imposto_reservado", "Imposto reservado"),
-            ("saldo_shopee_relatorio", "Saldo oficial Shopee"),
-            ("diferenca_caixa_shopee", "Dif. caixa Shopee"),
-            ("pagamentos_sem_cadastro", "Entradas sem cadastro"),
-            ("shopee_ads", "Shopee Ads"),
         ]
         for idx, (key, title) in enumerate(metric_defs):
             card = MetricCard(metrics, title)
@@ -107,23 +105,24 @@ class CashFlowView(ctk.CTkFrame):
             metrics.grid_columnconfigure(idx % 4, weight=1)
             self.cards[key] = card
 
-        ctk.CTkLabel(parent, text="Esteira do dinheiro", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=8, pady=(10, 0))
+        ctk.CTkLabel(parent, text="Esteira do dinheiro", font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=8, pady=(14, 0))
         flow = ctk.CTkFrame(parent)
-        flow.pack(fill="x", padx=8, pady=8)
+        flow.pack(fill="x", padx=8, pady=10)
         steps = [
-            ("saldo_possivel_aberto", "Aberto futuro"),
-            ("saldo_shopee_espera", "Shopee em espera"),
-            ("saldo_shopee_disponivel", "Caixa Shopee"),
-            ("saldo_banco", "Banco"),
+            ("saldo_possivel_aberto", "Aberto futuro", "pedido ainda a enviar"),
+            ("saldo_shopee_espera", "Shopee em espera", "pedido saiu da fila"),
+            ("saldo_shopee_disponivel", "Caixa Shopee", "saldo oficial da carteira"),
+            ("saldo_banco", "Banco", "saque recebido"),
         ]
         col = 0
-        for key, title in steps:
+        for key, title, subtitle in steps:
             node = ctk.CTkFrame(flow)
-            node.grid(row=0, column=col, sticky="ew", padx=4, pady=8)
+            node.grid(row=0, column=col, sticky="ew", padx=4, pady=10)
             flow.grid_columnconfigure(col, weight=1)
-            ctk.CTkLabel(node, text=title, font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="center", padx=8, pady=(8, 2))
-            value_label = ctk.CTkLabel(node, text="-", font=ctk.CTkFont(size=18, weight="bold"))
-            value_label.pack(anchor="center", padx=8, pady=(0, 8))
+            ctk.CTkLabel(node, text=title, font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="center", padx=8, pady=(10, 0))
+            ctk.CTkLabel(node, text=subtitle, text_color="gray", font=ctk.CTkFont(size=11)).pack(anchor="center", padx=8, pady=(0, 3))
+            value_label = ctk.CTkLabel(node, text="-", font=ctk.CTkFont(size=20, weight="bold"))
+            value_label.pack(anchor="center", padx=8, pady=(0, 10))
             self.flow_values[key] = value_label
             col += 1
             if col < 7:
@@ -309,7 +308,7 @@ class CashFlowView(ctk.CTkFrame):
         else:
             self.status_var.set(
                 f"Período visual: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}. "
-                f"Caixa Shopee usa saldo oficial da carteira quando disponível."
+                "Resumo limpo; diagnóstico detalhado na aba Auditoria."
             )
 
     def _render_summary(self, summary: dict) -> None:
@@ -324,10 +323,6 @@ class CashFlowView(ctk.CTkFrame):
             "caixa_livre_estimado",
             "despesas",
             "imposto_reservado",
-            "saldo_shopee_relatorio",
-            "diferenca_caixa_shopee",
-            "pagamentos_sem_cadastro",
-            "shopee_ads",
         }
         for key, card in self.cards.items():
             value = summary.get(key)
