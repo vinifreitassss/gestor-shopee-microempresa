@@ -72,18 +72,18 @@ class CashFlowView(ctk.CTkFrame):
         ctk.CTkLabel(box, text="Posição inicial do controle", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=8, padx=8, pady=(8, 2), sticky="w")
         ctk.CTkLabel(box, text="Data de corte:").grid(row=1, column=0, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.cutoff_var, width=120).grid(row=1, column=1, padx=8, pady=8)
-        ctk.CTkLabel(box, text="Banco:").grid(row=1, column=2, padx=8, pady=8)
+        ctk.CTkLabel(box, text="Banco inicial:").grid(row=1, column=2, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.bank_var, width=110).grid(row=1, column=3, padx=8, pady=8)
         ctk.CTkLabel(box, text="Caixa Shopee inicial:").grid(row=1, column=4, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.shopee_cash_var, width=110).grid(row=1, column=5, padx=8, pady=8)
         ctk.CTkLabel(box, text="Espera inicial:").grid(row=1, column=6, padx=8, pady=8)
         ctk.CTkEntry(box, textvariable=self.shopee_waiting_var, width=110).grid(row=1, column=7, padx=8, pady=8)
-        ctk.CTkButton(box, text="Salvar posição inicial", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
+        ctk.CTkButton(box, text="Salvar marco zero", command=self.save_position).grid(row=1, column=8, padx=8, pady=8)
 
     def _build_summary_tab(self, parent) -> None:
         ctk.CTkLabel(
             parent,
-            text="Visão resumida da esteira: pedido aberto → em espera → carteira Shopee → banco. Detalhes ficam na aba Auditoria.",
+            text="Mês é apenas uma janela visual. O saldo é acumulado desde o marco zero: pedidos, pagamentos, saques e despesas.",
             text_color="gray",
         ).pack(anchor="w", padx=8, pady=(8, 0))
 
@@ -110,9 +110,9 @@ class CashFlowView(ctk.CTkFrame):
         flow.pack(fill="x", padx=8, pady=10)
         steps = [
             ("saldo_possivel_aberto", "Aberto futuro", "pedido ainda a enviar"),
-            ("saldo_shopee_espera", "Shopee em espera", "pedido saiu da fila"),
-            ("saldo_shopee_disponivel", "Caixa Shopee", "saldo oficial da carteira"),
-            ("saldo_banco", "Banco", "saque recebido"),
+            ("saldo_shopee_espera", "Shopee em espera", "pedido enviado aguardando liberação"),
+            ("saldo_shopee_disponivel", "Caixa Shopee", "saldo calculado da carteira"),
+            ("saldo_banco", "Banco", "saques menos despesas"),
         ]
         col = 0
         for key, title, subtitle in steps:
@@ -132,7 +132,7 @@ class CashFlowView(ctk.CTkFrame):
     def _build_daily_tab(self, parent) -> None:
         ctk.CTkLabel(
             parent,
-            text="Fluxo diário projetado: use esta tela para decidir se pode comprar mercadoria, pagar despesa ou segurar caixa.",
+            text="Fluxo diário projetado: entrada Shopee aumenta disponibilidade; despesa reduz disponibilidade; envio previsto muda aberto futuro para espera.",
             text_color="gray",
         ).pack(anchor="w", padx=8, pady=(8, 4))
         self.projection_table = SimpleTable(
@@ -142,7 +142,7 @@ class CashFlowView(ctk.CTkFrame):
                 ("envio_previsto", "Envio previsto", 130),
                 ("entrada_shopee", "Entrada Shopee", 130),
                 ("saque", "Saque", 110),
-                ("despesa", "Despesa / estoque", 140),
+                ("despesa", "Despesa / débito", 140),
                 ("saldo_disponivel", "Disponível fim dia", 150),
                 ("saldo_total_gerencial", "Total gerencial fim dia", 170),
             ],
@@ -187,7 +187,7 @@ class CashFlowView(ctk.CTkFrame):
     def _build_audit_tab(self, parent) -> None:
         ctk.CTkLabel(
             parent,
-            text="Auditoria: confira o saldo oficial da carteira Shopee, o saldo reconstruído e os valores que não devem mexer automaticamente no em espera.",
+            text="Auditoria: mostra como o saldo foi reconstruído. Saldo oficial Shopee é conferência; não substitui o cálculo acumulado.",
             text_color="gray",
             wraplength=980,
             justify="left",
@@ -229,9 +229,9 @@ class CashFlowView(ctk.CTkFrame):
             messagebox.showerror("Erro", "Use data AAAA-MM-DD e valores numéricos válidos.")
             return
         except Exception as exc:
-            messagebox.showerror("Erro", f"Não foi possível salvar a posição inicial:\n{exc}")
+            messagebox.showerror("Erro", f"Não foi possível salvar o marco zero:\n{exc}")
             return
-        messagebox.showinfo("Posição inicial", "Posição inicial salva com sucesso.")
+        messagebox.showinfo("Marco zero", "Marco zero salvo com sucesso.")
         self.refresh()
 
     def _fallback_summary_from_form(self) -> dict:
@@ -251,7 +251,6 @@ class CashFlowView(ctk.CTkFrame):
             "saldo_shopee_relatorio": saldo_shopee,
             "diferenca_caixa_shopee": 0,
             "pagamentos_sem_cadastro": 0,
-            "shopee_ads": 0,
             "disponibilidades": disponibilidades,
             "total_dinheiro_gerencial": total,
             "caixa_livre_estimado": disponibilidades,
@@ -307,15 +306,14 @@ class CashFlowView(ctk.CTkFrame):
             self.status_var.set(" | ".join(errors))
         else:
             self.status_var.set(
-                f"Período visual: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}. "
-                "Resumo limpo; diagnóstico detalhado na aba Auditoria."
+                f"Mês visual: {summary.get('periodo_inicio')} até {summary.get('periodo_fim')}. "
+                "Saldos acumulados desde o marco zero."
             )
 
     def _render_summary(self, summary: dict) -> None:
         money_fields = {
             "total_dinheiro_gerencial",
             "disponibilidades",
-            "menor_disponibilidade",
             "saldo_banco",
             "saldo_shopee_disponivel",
             "saldo_shopee_espera",
@@ -335,13 +333,7 @@ class CashFlowView(ctk.CTkFrame):
 
     def _render_projection(self, projection: list[dict]) -> None:
         rows = []
-        min_available = None
-        min_day = "-"
         for row in projection:
-            available = float(row.get("saldo_disponivel") or 0)
-            if min_available is None or available < min_available:
-                min_available = available
-                min_day = row.get("data") or "-"
             rows.append(
                 {
                     **row,
@@ -354,10 +346,6 @@ class CashFlowView(ctk.CTkFrame):
                 }
             )
         self.projection_table.set_rows(rows)
-        if "menor_disponibilidade" in self.cards:
-            self.cards["menor_disponibilidade"].set_value(brl(min_available or 0))
-        if "dia_critico" in self.cards:
-            self.cards["dia_critico"].set_value(min_day)
 
     def _render_pipeline(self, pipeline: list[dict]) -> None:
         rows = []
