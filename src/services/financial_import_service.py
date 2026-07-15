@@ -1,5 +1,6 @@
 from datetime import date
 from pathlib import Path
+import hashlib
 import sqlite3
 
 from src.database import fetch_all, get_connection, now_iso
@@ -8,6 +9,7 @@ from src.importers.shopee_financial_importer import (
     FinancialOrder,
     ShopeeFinancialImporter,
 )
+from src.services.cancellations_service import apply_manual_cancellations
 from src.utils import mes_referencia_from_date, normalize_text
 
 
@@ -25,8 +27,16 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
     if report_type == "pedidos_enviados":
         orders = importer.preview_orders(file_path, data_envio_real=data_envio_real)
         orders_valid = [order for order in orders if not order.esta_cancelado]
+        existing = _existing_order_ids()
+        current_ids = {order.pedido_id for order in orders_valid if order.pedido_id}
+        currently_open = _current_open_order_ids()
+        new_ids = current_ids - existing
+        continuing_ids = current_ids & currently_open
+        leaving_ids = currently_open - current_ids
+
         valor_total = sum(order.valor_total for order in orders_valid)
         liquido_aberto = sum(order.valor_liquido_estimado for order in orders_valid)
+        novo_aberto = sum(order.valor_liquido_estimado for order in orders_valid if order.pedido_id in new_ids)
         rows = [
             {
                 "pedido_id": order.pedido_id,
@@ -34,7 +44,7 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
                 "data": order.data_prevista_envio or order.data_criacao,
                 "valor": order.valor_total,
                 "liquido": order.valor_liquido_estimado,
-                "obs": "aberto futuro / snapshot do dia",
+                "obs": "novo" if order.pedido_id in new_ids else "continua aberto / não dobra",
             }
             for order in orders[:200]
         ]
@@ -49,17 +59,24 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
             "taxas": 0,
             "pedidos_com_rastreio": 0,
             "pedidos_sem_rastreio": len(orders_valid),
+            "novos": len(new_ids),
+            "continuam": len(continuing_ids),
+            "sairam_da_fila": len(leaving_ids),
+            "novo_aberto": novo_aberto,
             "rows": rows,
         }
 
     if report_type == "pagamentos_shopee":
         transactions = importer.preview_transactions(file_path)
-        entradas = sum(t.valor for t in transactions if normalize_text(t.direcao) == "entrada")
-        saques = sum(abs(t.valor) for t in transactions if t.is_saque)
-        ads = sum(abs(t.valor) for t in transactions if t.is_ads and t.valor < 0)
-        ajustes_pedido = sum(abs(t.valor) for t in transactions if t.is_ajuste_desconto_pedido)
-        debitos_sem_saque = sum(abs(t.valor) for t in transactions if t.is_saida_sem_saque)
-        pedidos = sum(1 for t in transactions if t.is_entrada_com_pedido)
+        existing_uids = _existing_transaction_uids()
+        new_transactions = [t for t in transactions if _transaction_uid(t) not in existing_uids]
+        repeated = len(transactions) - len(new_transactions)
+        entradas = sum(t.valor for t in new_transactions if normalize_text(t.direcao) == "entrada")
+        saques = sum(abs(t.valor) for t in new_transactions if t.is_saque)
+        ads = sum(abs(t.valor) for t in new_transactions if t.is_ads and t.valor < 0)
+        ajustes_pedido = sum(abs(t.valor) for t in new_transactions if t.is_ajuste_desconto_pedido)
+        debitos_sem_saque = sum(abs(t.valor) for t in new_transactions if t.is_saida_sem_saque)
+        pedidos = sum(1 for t in new_transactions if t.is_entrada_com_pedido)
         rows = [
             {
                 "pedido_id": transaction.pedido_id,
@@ -67,13 +84,15 @@ def preview_financial_importation(file_path: str, report_type: str, data_envio_r
                 "data": transaction.data_movimento,
                 "valor": transaction.valor,
                 "liquido": transaction.balanca_apos_transacoes,
-                "obs": _transaction_obs(transaction),
+                "obs": "nova: " + _transaction_obs(transaction) if _transaction_uid(transaction) not in existing_uids else "repetida / ignorada",
             }
             for transaction in transactions[:200]
         ]
         return {
             "report_type": report_type,
             "count": len(transactions),
+            "novas": len(new_transactions),
+            "repetidas": repeated,
             "valor_total": entradas,
             "valor_liquido": entradas - saques - debitos_sem_saque,
             "taxas": saques,
@@ -110,12 +129,14 @@ def save_financial_importation(
             orders = importer.preview_orders(path, data_envio_real=data_fim)
             _consolidate_orders_snapshot(conn, importacao_id, orders, data_fim)
             _reconcile_all_orders(conn)
+            apply_manual_cancellations(conn)
             return importacao_id
 
         if report_type == "pagamentos_shopee":
             transactions = importer.preview_transactions(path)
             _save_transactions(conn, importacao_id, transactions)
             _reconcile_all_orders(conn)
+            apply_manual_cancellations(conn)
             return importacao_id
 
         raise ValueError(f"Tipo de relatório financeiro desconhecido: {report_type}")
@@ -139,6 +160,37 @@ def find_financial_importations_same_period(
         """,
         (report_type, tipo_periodo, data_inicio.isoformat(), data_fim.isoformat()),
     )
+
+
+def _existing_order_ids() -> set[str]:
+    return {
+        row["pedido_id"]
+        for row in fetch_all("SELECT pedido_id FROM shopee_pedidos_financeiros")
+        if row.get("pedido_id")
+    }
+
+
+def _current_open_order_ids() -> set[str]:
+    return {
+        row["pedido_id"]
+        for row in fetch_all("SELECT pedido_id FROM shopee_pedidos_financeiros WHERE status_financeiro = 'em_aberto'")
+        if row.get("pedido_id")
+    }
+
+
+def _existing_transaction_uids() -> set[str]:
+    rows = fetch_all(
+        """
+        SELECT
+            COALESCE(
+                transaction_uid,
+                data_movimento || '|' || tipo_transacao || '|' || COALESCE(descricao, '') || '|' ||
+                COALESCE(pedido_id, '') || '|' || COALESCE(direcao, '') || '|' || valor || '|' || balanca_apos_transacoes
+            ) AS uid
+        FROM shopee_transacoes
+        """
+    )
+    return {row["uid"] for row in rows if row.get("uid")}
 
 
 def _create_importation(
@@ -209,45 +261,29 @@ def _consolidate_orders_snapshot(
     for order in valid_orders:
         _upsert_open_order(conn, importacao_id, order, timestamp)
 
-    if current_ids:
-        placeholders = ",".join("?" for _ in current_ids)
-        params = [SNAPSHOT_SENT_TRACKING, snapshot_date.isoformat(), timestamp, *current_ids]
-        conn.execute(
-            f"""
-            UPDATE shopee_pedidos_financeiros
-            SET status_financeiro = 'em_espera',
-                numero_rastreio = CASE
-                    WHEN numero_rastreio IS NOT NULL AND TRIM(numero_rastreio) <> '' THEN numero_rastreio
-                    ELSE ?
-                END,
-                data_envio_real = CASE
-                    WHEN data_envio_real IS NOT NULL AND TRIM(data_envio_real) <> '' THEN data_envio_real
-                    ELSE ?
-                END,
-                atualizado_em = ?
-            WHERE status_financeiro = 'em_aberto'
-              AND pedido_id NOT IN ({placeholders})
-            """,
-            params,
-        )
-    else:
-        conn.execute(
-            """
-            UPDATE shopee_pedidos_financeiros
-            SET status_financeiro = 'em_espera',
-                numero_rastreio = CASE
-                    WHEN numero_rastreio IS NOT NULL AND TRIM(numero_rastreio) <> '' THEN numero_rastreio
-                    ELSE ?
-                END,
-                data_envio_real = CASE
-                    WHEN data_envio_real IS NOT NULL AND TRIM(data_envio_real) <> '' THEN data_envio_real
-                    ELSE ?
-                END,
-                atualizado_em = ?
-            WHERE status_financeiro = 'em_aberto'
-            """,
-            (SNAPSHOT_SENT_TRACKING, snapshot_date.isoformat(), timestamp),
-        )
+    if not current_ids:
+        return
+
+    placeholders = ",".join("?" for _ in current_ids)
+    params = [SNAPSHOT_SENT_TRACKING, snapshot_date.isoformat(), timestamp, *current_ids]
+    conn.execute(
+        f"""
+        UPDATE shopee_pedidos_financeiros
+        SET status_financeiro = 'em_espera',
+            numero_rastreio = CASE
+                WHEN numero_rastreio IS NOT NULL AND TRIM(numero_rastreio) <> '' THEN numero_rastreio
+                ELSE ?
+            END,
+            data_envio_real = CASE
+                WHEN data_envio_real IS NOT NULL AND TRIM(data_envio_real) <> '' THEN data_envio_real
+                ELSE ?
+            END,
+            atualizado_em = ?
+        WHERE status_financeiro = 'em_aberto'
+          AND pedido_id NOT IN ({placeholders})
+        """,
+        params,
+    )
 
 
 def _upsert_open_order(
@@ -284,12 +320,12 @@ def _upsert_open_order(
                 ELSE 'em_aberto'
             END,
             numero_rastreio = CASE
-                WHEN shopee_pedidos_financeiros.status_financeiro IN ('liberado', 'divergente')
+                WHEN shopee_pedidos_financeiros.status_financeiro IN ('liberado', 'divergente', 'cancelado')
                 THEN shopee_pedidos_financeiros.numero_rastreio
                 ELSE ''
             END,
             data_envio_real = CASE
-                WHEN shopee_pedidos_financeiros.status_financeiro IN ('liberado', 'divergente')
+                WHEN shopee_pedidos_financeiros.status_financeiro IN ('liberado', 'divergente', 'cancelado')
                 THEN shopee_pedidos_financeiros.data_envio_real
                 ELSE ''
             END,
@@ -337,6 +373,22 @@ def _upsert_open_order(
         )
 
 
+def _transaction_uid(transaction: BalanceTransaction) -> str:
+    raw = "|".join(
+        [
+            str(transaction.data_movimento or ""),
+            str(transaction.tipo_transacao or ""),
+            str(transaction.descricao or ""),
+            str(transaction.pedido_id or ""),
+            str(transaction.direcao or ""),
+            f"{float(transaction.valor or 0):.2f}",
+            f"{float(transaction.balanca_apos_transacoes or 0):.2f}",
+            f"{float(transaction.valor_ajustado or 0):.2f}",
+        ]
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def _save_transactions(
     conn: sqlite3.Connection,
     importacao_id: int,
@@ -345,16 +397,18 @@ def _save_transactions(
     timestamp = now_iso()
 
     for transaction in transactions:
-        conn.execute(
+        uid = _transaction_uid(transaction)
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO shopee_transacoes (
-                importacao_id, data_movimento, tipo_transacao, descricao, pedido_id, direcao,
-                valor, status, balanca_apos_transacoes, valor_ajustado,
-                status_conciliacao, criado_em
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?)
+                importacao_id, transaction_uid, data_movimento, tipo_transacao, descricao,
+                pedido_id, direcao, valor, status, balanca_apos_transacoes,
+                valor_ajustado, status_conciliacao, criado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?)
             """,
             (
                 importacao_id,
+                uid,
                 transaction.data_movimento,
                 transaction.tipo_transacao,
                 transaction.descricao,
@@ -367,6 +421,8 @@ def _save_transactions(
                 timestamp,
             ),
         )
+        if cursor.rowcount == 0:
+            continue
 
         if transaction.is_saque:
             transaction_id = _find_transaction_id(conn, transaction)
@@ -405,10 +461,7 @@ def _save_ads_expense(
     except ValueError:
         return
 
-    reference = (
-        f"shopee_ads:{transaction.data_movimento}:"
-        f"{transaction.valor}:{transaction.balanca_apos_transacoes}"
-    )
+    reference = f"shopee_ads:{_transaction_uid(transaction)}"
     exists = conn.execute(
         "SELECT id FROM despesas WHERE origem_referencia = ? LIMIT 1",
         (reference,),
@@ -436,6 +489,19 @@ def _save_ads_expense(
 
 
 def _find_transaction_id(conn: sqlite3.Connection, transaction: BalanceTransaction) -> int | None:
+    uid = _transaction_uid(transaction)
+    row = conn.execute(
+        """
+        SELECT id FROM shopee_transacoes
+        WHERE transaction_uid = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (uid,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
     row = conn.execute(
         """
         SELECT id FROM shopee_transacoes
@@ -497,13 +563,15 @@ def _reconcile_all_orders(conn: sqlite3.Connection) -> None:
     for payment in payments:
         order = conn.execute(
             """
-            SELECT pedido_id, valor_liquido_estimado
+            SELECT pedido_id, valor_liquido_estimado, status_financeiro
             FROM shopee_pedidos_financeiros
             WHERE pedido_id = ?
             """,
             (payment["pedido_id"],),
         ).fetchone()
         if not order:
+            continue
+        if order["status_financeiro"] == "cancelado":
             continue
 
         valor_pago = float(payment["valor_pago"] or 0)
