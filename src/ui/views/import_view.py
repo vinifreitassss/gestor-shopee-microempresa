@@ -4,6 +4,7 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
+from src.database import fetch_all
 from src.importer import ShopeeImportError, ShopeeImporter
 from src.services.financial_import_service import (
     find_financial_importations_same_period,
@@ -41,11 +42,13 @@ REPORT_HINTS = {
     ),
     "pedidos_enviados": (
         "Arquivo Order.toship: snapshot diário dos pedidos ainda a enviar. "
-        "Pedidos que aparecem nele ficam em Aberto futuro. Pedidos abertos que somem no próximo snapshot são consolidados como Shopee em espera."
+        "Pedidos que aparecem nele ficam em Aberto futuro. "
+        "Pedidos abertos que somem no próximo snapshot são consolidados como Shopee em espera."
     ),
     "pagamentos_shopee": (
         "Arquivo my_balance: alimenta a conciliação financeira. "
-        "Entradas reduzem Shopee em espera e aumentam Caixa Shopee; saques movem Caixa Shopee para Banco; débitos reduzem Caixa Shopee."
+        "Entradas reduzem Shopee em espera e aumentam Caixa Shopee; "
+        "saques movem Caixa Shopee para Banco; débitos reduzem Caixa Shopee."
     ),
 }
 
@@ -72,7 +75,7 @@ class ImportView(ctk.CTkFrame):
         self.data_fim_var = ctk.StringVar(value=yesterday.isoformat())
         self.status_var = ctk.StringVar(value="Nenhuma planilha selecionada.")
         self.summary_var = ctk.StringVar(value="Escolha uma planilha e confira o tipo antes de confirmar.")
-        self.history_tables = {}
+        self.history_tables: dict[str, SimpleTable] = {}
         self.preview_lines = []
         self._build()
         self._bind_summary_updates()
@@ -80,7 +83,11 @@ class ImportView(ctk.CTkFrame):
         self.refresh()
 
     def _build(self) -> None:
-        ctk.CTkLabel(self, text="Central de Importações Shopee", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
+        ctk.CTkLabel(
+            self,
+            text="Central de Importações Shopee",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        ).pack(anchor="w", padx=PAD, pady=PAD)
 
         box = ctk.CTkFrame(self)
         box.pack(fill="x", padx=PAD, pady=(0, PAD))
@@ -120,7 +127,8 @@ class ImportView(ctk.CTkFrame):
         ctk.CTkButton(action_row, text="Pré-visualizar", command=self.preview).pack(side="left", padx=(0, 8), pady=4)
         ctk.CTkButton(action_row, text="Confirmar e plugar no app", command=self.confirm_import).pack(side="left", padx=8, pady=4)
         ctk.CTkButton(action_row, text="Excluir selecionada da aba atual", command=self.delete_selected_importation).pack(side="left", padx=8, pady=4)
-        ctk.CTkLabel(action_row, textvariable=self.status_var, text_color="gray", wraplength=560, justify="left").pack(side="left", padx=16, pady=4)
+        ctk.CTkButton(action_row, text="Apagar TODAS da aba atual", command=self.delete_all_current_tab).pack(side="left", padx=8, pady=4)
+        ctk.CTkLabel(action_row, textvariable=self.status_var, text_color="gray", wraplength=420, justify="left").pack(side="left", padx=16, pady=4)
 
         ctk.CTkLabel(
             box,
@@ -151,7 +159,13 @@ class ImportView(ctk.CTkFrame):
         self.history_tabs.pack(fill="both", expand=True, padx=PAD, pady=(6, PAD))
         for tab_name, report_type in HISTORY_TABS.items():
             tab = self.history_tabs.add(tab_name)
-            ctk.CTkLabel(tab, text=REPORT_HINTS[report_type], text_color="gray", wraplength=980, justify="left").pack(anchor="w", padx=8, pady=(8, 4))
+            ctk.CTkLabel(
+                tab,
+                text=REPORT_HINTS[report_type],
+                text_color="gray",
+                wraplength=980,
+                justify="left",
+            ).pack(anchor="w", padx=8, pady=(8, 4))
             table = SimpleTable(tab, HISTORY_COLUMNS, height=7)
             table.pack(fill="both", expand=True, padx=8, pady=8)
             self.history_tables[report_type] = table
@@ -161,7 +175,10 @@ class ImportView(ctk.CTkFrame):
             var.trace_add("write", lambda *_: self.update_import_summary())
 
     def choose_file(self) -> None:
-        path = filedialog.askopenfilename(title="Escolha a planilha Shopee", filetypes=[("Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")])
+        path = filedialog.askopenfilename(
+            title="Escolha a planilha Shopee",
+            filetypes=[("Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")],
+        )
         if path:
             self.file_path_var.set(path)
             self._suggest_report_type_from_filename(Path(path).name)
@@ -179,6 +196,12 @@ class ImportView(ctk.CTkFrame):
 
     def _report_type(self) -> str:
         return REPORT_OPTIONS[self.report_label_var.get()]
+
+    def _current_history_context(self) -> tuple[str, str, SimpleTable | None]:
+        current_tab = self.history_tabs.get()
+        report_type = HISTORY_TABS.get(current_tab, "")
+        table = self.history_tables.get(report_type)
+        return current_tab, report_type, table
 
     def update_import_summary(self) -> None:
         path = self.file_path_var.get().strip()
@@ -217,7 +240,16 @@ class ImportView(ctk.CTkFrame):
         for line in self.preview_lines:
             if not line.contabilizar:
                 continue
-            rows.append({"pedido_id": line.produto_nome, "status": line.variacao_nome, "data": "", "valor": brl(line.vendas_pedido_pago), "liquido": "", "obs": f"{line.unidades_pedido_pago} un. | DRE/produtos"})
+            rows.append(
+                {
+                    "pedido_id": line.produto_nome,
+                    "status": line.variacao_nome,
+                    "data": "",
+                    "valor": brl(line.vendas_pedido_pago),
+                    "liquido": "",
+                    "obs": f"{line.unidades_pedido_pago} un. | DRE/produtos",
+                }
+            )
         self.preview_table.set_rows(rows)
         self.status_var.set(f"{len(rows)} variações vendidas encontradas. Impacto: DRE/produtos, sem fluxo de caixa.")
 
@@ -227,14 +259,18 @@ class ImportView(ctk.CTkFrame):
         self.preview_table.set_rows(rows)
         if report_type == "pedidos_enviados":
             self.status_var.set(
-                f"{preview['count']} pedidos no snapshot. Aberto futuro: {brl(preview.get('saldo_possivel_aberto', 0))}. "
-                "Pedidos que sumirem no próximo snapshot são consolidados como Shopee em espera."
+                f"{preview['count']} pedidos no snapshot. "
+                f"Novos: {preview.get('novos', 0)}. Continuam: {preview.get('continuam', 0)}. "
+                f"Saíram da fila: {preview.get('sairam_da_fila', 0)}. "
+                f"Aberto futuro total: {brl(preview.get('saldo_possivel_aberto', 0))}."
             )
         else:
             self.status_var.set(
-                f"{preview['count']} transações. Entradas: {brl(preview['valor_total'])}. "
-                f"Saques: {brl(preview.get('saques', preview.get('taxas', 0)))}. "
-                f"Ads: {brl(preview.get('ads', 0))}. Ajustes: {brl(preview.get('ajustes_pedido', 0))}."
+                f"{preview['count']} transações no arquivo. "
+                f"Novas: {preview.get('novas', 0)}. Repetidas ignoradas: {preview.get('repetidas', 0)}. "
+                f"Entradas novas: {brl(preview['valor_total'])}. "
+                f"Saques novos: {brl(preview.get('saques', preview.get('taxas', 0)))}. "
+                f"Ads: {brl(preview.get('ads', 0))}."
             )
 
     def confirm_import(self) -> None:
@@ -265,7 +301,11 @@ class ImportView(ctk.CTkFrame):
             if tipo == "mensal":
                 duplicates = find_importations_same_month(report_type, tipo, mes_ref)
             else:
-                duplicates = find_importations_same_period(tipo, data_inicio, data_fim) if report_type == "performance" else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
+                duplicates = (
+                    find_importations_same_period(tipo, data_inicio, data_fim)
+                    if report_type == "performance"
+                    else find_financial_importations_same_period(report_type, tipo, data_inicio, data_fim)
+                )
             replacement_text = ""
             if duplicates:
                 replacement_text = f"\n\nAtenção: serão substituída(s) {len(duplicates)} importação(ões) anterior(es) desse mesmo tipo/período."
@@ -306,15 +346,18 @@ class ImportView(ctk.CTkFrame):
             messagebox.showerror("Erro", f"Não foi possível importar:\n{exc}")
 
     def delete_selected_importation(self) -> None:
-        current_tab = self.history_tabs.get()
-        report_type = HISTORY_TABS.get(current_tab)
-        table = self.history_tables.get(report_type)
+        current_tab, report_type, table = self._current_history_context()
         if not table:
             messagebox.showwarning("Atenção", "Não consegui identificar a aba atual.")
             return
         selected = table.selected_values()
         if not selected:
-            messagebox.showwarning("Atenção", f"Selecione uma importação na aba {current_tab}.")
+            messagebox.showwarning(
+                "Atenção",
+                f"Selecione uma importação na aba {current_tab}.\n\n"
+                "Dica: clique uma vez em qualquer célula da linha.\n"
+                "Se quiser limpar tudo, use 'Apagar TODAS da aba atual'.",
+            )
             return
         try:
             importacao_id = int(selected[0])
@@ -338,6 +381,64 @@ class ImportView(ctk.CTkFrame):
             return
         self.status_var.set(f"Importação ID {importacao_id} excluída da aba {current_tab}.")
         self.refresh()
+
+    def delete_all_current_tab(self) -> None:
+        current_tab, report_type, _table = self._current_history_context()
+        if not report_type:
+            messagebox.showwarning("Atenção", "Não consegui identificar a aba atual.")
+            return
+        rows = fetch_all(
+            """
+            SELECT id, arquivo_nome, criado_em
+            FROM importacoes
+            WHERE tipo_relatorio = ?
+            ORDER BY criado_em DESC
+            """,
+            (report_type,),
+        )
+        if not rows:
+            messagebox.showinfo("Nada para apagar", f"A aba {current_tab} não tem importações.")
+            return
+
+        extra_warning = ""
+        if report_type == "pedidos_enviados":
+            extra_warning = (
+                "\n\nAtenção: apagar snapshots Order.toship remove a base de pedidos/esteira criada por esses arquivos. "
+                "Faça isso apenas para recomeçar a importação do fluxo."
+            )
+        elif report_type == "pagamentos_shopee":
+            extra_warning = (
+                "\n\nAtenção: apagar my_balance remove transações, saques e despesas Shopee Ads criadas por esses arquivos."
+            )
+
+        confirm = messagebox.askyesno(
+            "Apagar todas as importações da aba",
+            f"Você vai apagar {len(rows)} importação(ões) da aba {current_tab}.\n\n"
+            "Esta ação remove os dados gerados por essas planilhas."
+            f"{extra_warning}\n\nContinuar?",
+        )
+        if not confirm:
+            return
+
+        deleted_count = 0
+        errors = []
+        for row in rows:
+            try:
+                if delete_importation(int(row["id"])):
+                    deleted_count += 1
+            except Exception as exc:
+                errors.append(f"ID {row['id']}: {exc}")
+
+        self.refresh()
+        if errors:
+            messagebox.showwarning(
+                "Limpeza parcial",
+                f"Apaguei {deleted_count} importação(ões), mas houve erro em {len(errors)}.\n\n"
+                + "\n".join(errors[:5]),
+            )
+        else:
+            messagebox.showinfo("Aba limpa", f"Apaguei {deleted_count} importação(ões) da aba {current_tab}.")
+        self.status_var.set(f"Aba {current_tab}: {deleted_count} importação(ões) apagadas.")
 
     def refresh(self) -> None:
         rows = list_importations()
