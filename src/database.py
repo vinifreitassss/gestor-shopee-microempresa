@@ -255,6 +255,7 @@ def init_database() -> None:
             CREATE TABLE IF NOT EXISTS shopee_transacoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 importacao_id INTEGER,
+                transaction_uid TEXT,
                 data_movimento TEXT NOT NULL,
                 tipo_transacao TEXT NOT NULL,
                 descricao TEXT DEFAULT '',
@@ -295,6 +296,16 @@ def init_database() -> None:
                 atualizado_em TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cancelamentos_pedidos (
+                pedido_id TEXT PRIMARY KEY,
+                data_cancelamento TEXT NOT NULL,
+                motivo TEXT DEFAULT '',
+                status_anterior TEXT DEFAULT '',
+                valor_baixado REAL NOT NULL DEFAULT 0,
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_status
                 ON shopee_pedidos_financeiros(status_financeiro);
             CREATE INDEX IF NOT EXISTS idx_shopee_pedidos_envio
@@ -303,6 +314,9 @@ def init_database() -> None:
                 ON shopee_transacoes(pedido_id);
             CREATE INDEX IF NOT EXISTS idx_shopee_transacoes_data
                 ON shopee_transacoes(data_movimento);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_shopee_transacoes_uid
+                ON shopee_transacoes(transaction_uid)
+                WHERE transaction_uid IS NOT NULL AND transaction_uid <> '';
             CREATE INDEX IF NOT EXISTS idx_shopee_saques_data
                 ON shopee_saques(data_saque);
             CREATE INDEX IF NOT EXISTS idx_posicoes_iniciais_caixa_data
@@ -334,6 +348,7 @@ def init_database() -> None:
         _ensure_column(conn, "despesas", "origem_importacao_id", "INTEGER")
         _ensure_column(conn, "despesas", "origem_referencia", "TEXT DEFAULT ''")
         _ensure_column(conn, "despesas_recorrentes", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "shopee_transacoes", "transaction_uid", "TEXT")
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
