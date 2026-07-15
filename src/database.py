@@ -314,9 +314,6 @@ def init_database() -> None:
                 ON shopee_transacoes(pedido_id);
             CREATE INDEX IF NOT EXISTS idx_shopee_transacoes_data
                 ON shopee_transacoes(data_movimento);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_shopee_transacoes_uid
-                ON shopee_transacoes(transaction_uid)
-                WHERE transaction_uid IS NOT NULL AND transaction_uid <> '';
             CREATE INDEX IF NOT EXISTS idx_shopee_saques_data
                 ON shopee_saques(data_saque);
             CREATE INDEX IF NOT EXISTS idx_posicoes_iniciais_caixa_data
@@ -349,6 +346,14 @@ def init_database() -> None:
         _ensure_column(conn, "despesas", "origem_referencia", "TEXT DEFAULT ''")
         _ensure_column(conn, "despesas_recorrentes", "incide_dre", "INTEGER NOT NULL DEFAULT 1")
         _ensure_column(conn, "shopee_transacoes", "transaction_uid", "TEXT")
+
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_shopee_transacoes_uid
+            ON shopee_transacoes(transaction_uid)
+            WHERE transaction_uid IS NOT NULL AND transaction_uid <> ''
+            """
+        )
 
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
