@@ -2,6 +2,7 @@ import customtkinter as ctk
 
 from src.config import APP_NAME, APP_VERSION
 from src.ui.theme import SIDEBAR_WIDTH, apply_theme
+from src.ui.views.cancellations_view import CancellationsView
 from src.ui.views.cashflow_view import CashFlowView
 from src.ui.views.costs_view import CostsView
 from src.ui.views.dashboard_view import DashboardView
@@ -23,6 +24,7 @@ VIEWS = {
     "Insumos / Estoque": InputsView,
     "Despesas": ExpensesView,
     "Fluxo de Caixa": CashFlowView,
+    "Cancelamentos": CancellationsView,
     "Resultado Operacional": DreView,
     "Configurações": SettingsView,
 }
