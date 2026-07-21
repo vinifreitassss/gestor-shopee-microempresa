@@ -13,6 +13,7 @@ from src.ui.views.inputs_view import InputsView
 from src.ui.views.launcher_view import LauncherView
 from src.ui.views.products_view import ProductsView
 from src.ui.views.settings_view import SettingsView
+from src.ui.views.shopee_fees_view import ShopeeFeesView
 
 
 VIEWS = {
@@ -25,6 +26,7 @@ VIEWS = {
     "Despesas": ExpensesView,
     "Fluxo de Caixa": CashFlowView,
     "Cancelamentos": CancellationsView,
+    "Taxas Shopee": ShopeeFeesView,
     "Resultado Operacional": DreView,
     "Configurações": SettingsView,
 }
