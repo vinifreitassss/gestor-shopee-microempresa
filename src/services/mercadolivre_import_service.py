@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 import re
 
@@ -43,13 +43,9 @@ def _int(value) -> int:
 
 
 def _detect_header(ws) -> int:
-    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 30), values_only=True):
-        values = {_norm(v).lower() for v in row}
-        if "id do anúncio" in values and "anúncio" in values and "unidades vendidas" in values:
-            return row[0]._parent.row if hasattr(row[0], "_parent") else 6
     for idx in range(1, min(ws.max_row, 30) + 1):
-        values = {_norm(v).lower() for v in next(ws.iter_rows(min_row=idx, max_row=idx, values_only=True))}
-        if "id do anúncio" in values:
+        values = [_norm(v).lower() for v in next(ws.iter_rows(min_row=idx, max_row=idx, values_only=True))]
+        if "id do anúncio" in values and "anúncio" in values and "unidades vendidas" in values:
             return idx
     raise ValueError("Não encontrei o cabeçalho do relatório do Mercado Livre.")
 
@@ -90,7 +86,6 @@ def preview_mercadolivre(file_path: str) -> dict:
     ws = wb["Relatório"] if "Relatório" in wb.sheetnames else wb.active
     header_row = _detect_header(ws)
     headers = [_norm(v) for v in next(ws.iter_rows(min_row=header_row, max_row=header_row, values_only=True))]
-
     cols = {name: _find_col(headers, name) for name in [
         "ID do anúncio", "Anúncio", "Status atual", "Variação", "SKU",
         "Unidades vendidas", "Vendas brutas (BRL)",
@@ -101,7 +96,10 @@ def preview_mercadolivre(file_path: str) -> dict:
         raise ValueError("Colunas ausentes no relatório Mercado Livre: " + ", ".join(missing))
 
     rows = []
-    for values in ws.iter_rows(min_row=header_row + 1, values_only=True):
+    for raw_values in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        values = list(raw_values)
+        if len(values) < len(headers):
+            values.extend([None] * (len(headers) - len(values)))
         ad_id = _norm(values[cols["ID do anúncio"]])
         name = _norm(values[cols["Anúncio"]])
         units = _int(values[cols["Unidades vendidas"]])
@@ -136,10 +134,7 @@ def preview_mercadolivre(file_path: str) -> dict:
 
 def _upsert_ml_product(conn, row: dict) -> tuple[int, int]:
     parent_key = f"ML:{row['ad_id']}"
-    existing = conn.execute(
-        "SELECT id FROM produtos_pai WHERE id_item_shopee = ?",
-        (parent_key,),
-    ).fetchone()
+    existing = conn.execute("SELECT id FROM produtos_pai WHERE id_item_shopee = ?", (parent_key,)).fetchone()
     if existing:
         parent_id = int(existing["id"])
         conn.execute("UPDATE produtos_pai SET nome = ? WHERE id = ?", (row["produto_nome"], parent_id))
@@ -151,15 +146,13 @@ def _upsert_ml_product(conn, row: dict) -> tuple[int, int]:
         parent_id = int(cur.lastrowid)
 
     variation_key = f"ML:{row['ad_id']}:{row['variacao_nome']}"
-    existing = conn.execute(
-        "SELECT id FROM variacoes WHERE id_variacao_shopee = ?",
-        (variation_key,),
-    ).fetchone()
+    existing = conn.execute("SELECT id FROM variacoes WHERE id_variacao_shopee = ?", (variation_key,)).fetchone()
+    sku = row["sku"] or f"ML:{row['ad_id']}"
     if existing:
         variation_id = int(existing["id"])
         conn.execute(
-            "UPDATE variacoes SET produto_pai_id = ?, nome_variacao = ?, sku = COALESCE(NULLIF(?, ''), sku) WHERE id = ?",
-            (parent_id, row["variacao_nome"], row["sku"], variation_id),
+            "UPDATE variacoes SET produto_pai_id = ?, nome_variacao = ?, sku = ? WHERE id = ?",
+            (parent_id, row["variacao_nome"], sku, variation_id),
         )
     else:
         cur = conn.execute(
@@ -169,7 +162,7 @@ def _upsert_ml_product(conn, row: dict) -> tuple[int, int]:
                 tipo_produto, ativo, criado_em
             ) VALUES (?, ?, ?, ?, 'pronto', 1, ?)
             """,
-            (parent_id, variation_key, row["variacao_nome"], row["sku"] or None, now_iso()),
+            (parent_id, variation_key, row["variacao_nome"], sku, now_iso()),
         )
         variation_id = int(cur.lastrowid)
     return parent_id, variation_id
