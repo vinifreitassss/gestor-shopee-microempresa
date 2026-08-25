@@ -8,6 +8,11 @@ from src.services.settings_service import get_setting_float
 from src.utils import mes_referencia_from_date
 
 
+def _looks_like_mercadolivre(path: Path) -> bool:
+    name = path.name.lower().replace("_", " ").replace("-", " ")
+    return "mercado livre" in name or "mercadolivre" in name or name.startswith("ml ")
+
+
 def save_importation(
     file_path: str,
     tipo_periodo: str,
@@ -15,14 +20,24 @@ def save_importation(
     data_fim: date,
     mode: str = "perguntar",
 ) -> int:
-    """Importa e salva a planilha de desempenho/vendas da Shopee.
+    """Importa e salva desempenho/vendas.
 
-    mode aceita:
-    - substituir: apaga importações confirmadas no mesmo período antes de salvar;
-    - substituir_mes: apaga importações mensais confirmadas do mesmo mês antes de salvar;
-    - somar: mantém o que existe e adiciona nova importação.
+    A central usa esta função para Shopee e Mercado Livre. Arquivos ML são
+    encaminhados ao importador próprio para aplicar 22% + R$8/unidade.
     """
     path = Path(file_path)
+
+    if _looks_like_mercadolivre(path):
+        from src.services.mercadolivre_import_service import save_mercadolivre_importation
+
+        result = save_mercadolivre_importation(
+            str(path),
+            data_inicio,
+            data_fim,
+            replace_same_period=(mode != "somar"),
+        )
+        return int(result["importacao_id"])
+
     mes_ref = mes_referencia_from_date(data_inicio)
     importer = ShopeeImporter()
     lines = importer.preview(path)
@@ -162,7 +177,7 @@ def delete_importation(importacao_id: int) -> bool:
 
         report_type = current["tipo_relatorio"]
 
-        if report_type == "performance":
+        if report_type in {"performance", "mercadolivre_performance"}:
             conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
             return True
 
@@ -171,7 +186,6 @@ def delete_importation(importacao_id: int) -> bool:
             conn.execute("DELETE FROM shopee_pedidos_financeiros WHERE importacao_id = ?", (importacao_id,))
             conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
             from src.services.financial_import_service import _reconcile_all_orders
-
             _reconcile_all_orders(conn)
             return True
 
@@ -181,7 +195,6 @@ def delete_importation(importacao_id: int) -> bool:
             conn.execute("DELETE FROM shopee_transacoes WHERE importacao_id = ?", (importacao_id,))
             conn.execute("DELETE FROM importacoes WHERE id = ?", (importacao_id,))
             from src.services.financial_import_service import _reconcile_all_orders
-
             _reconcile_all_orders(conn)
             return True
 
@@ -227,25 +240,13 @@ def _upsert_products_and_sales(conn, importacao_id: int, lines: list[ImportedLin
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                importacao_id,
-                produto_pai_id,
-                variacao_id,
-                data_inicio.isoformat(),
-                data_fim.isoformat(),
-                mes_ref,
-                calc.unidades,
-                calc.faturamento,
-                calc.imposto_percentual,
-                calc.comissao_percentual,
-                calc.taxa_fixa_unitaria,
-                calc.imposto_valor,
-                calc.comissao_valor,
-                calc.taxa_fixa_valor,
-                calc.custo_unitario,
-                calc.custo_total,
-                calc.lucro,
-                1 if calc.lucro_incompleto else 0,
-                now_iso(),
+                importacao_id, produto_pai_id, variacao_id,
+                data_inicio.isoformat(), data_fim.isoformat(), mes_ref,
+                calc.unidades, calc.faturamento, calc.imposto_percentual,
+                calc.comissao_percentual, calc.taxa_fixa_unitaria,
+                calc.imposto_valor, calc.comissao_valor, calc.taxa_fixa_valor,
+                calc.custo_unitario, calc.custo_total, calc.lucro,
+                1 if calc.lucro_incompleto else 0, now_iso(),
             ),
         )
 
@@ -258,17 +259,11 @@ def _upsert_parent_product(conn, id_item_shopee: str, name: str) -> int:
             (id_item_shopee,),
         ).fetchone()
     if existing:
-        conn.execute(
-            "UPDATE produtos_pai SET nome = ? WHERE id = ?",
-            (name, existing["id"]),
-        )
+        conn.execute("UPDATE produtos_pai SET nome = ? WHERE id = ?", (name, existing["id"]))
         return int(existing["id"])
 
     cursor = conn.execute(
-        """
-        INSERT INTO produtos_pai (id_item_shopee, nome, ativo, criado_em)
-        VALUES (?, ?, 1, ?)
-        """,
+        "INSERT INTO produtos_pai (id_item_shopee, nome, ativo, criado_em) VALUES (?, ?, 1, ?)",
         (id_item_shopee or None, name, now_iso()),
     )
     return int(cursor.lastrowid)
@@ -287,13 +282,9 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
     else:
         existing = conn.execute(
             """
-            SELECT id
-            FROM variacoes
-            WHERE produto_pai_id = ?
-              AND id_variacao_shopee IS NULL
-              AND nome_variacao = ?
-            ORDER BY id DESC
-            LIMIT 1
+            SELECT id FROM variacoes
+            WHERE produto_pai_id = ? AND id_variacao_shopee IS NULL AND nome_variacao = ?
+            ORDER BY id DESC LIMIT 1
             """,
             (produto_pai_id, variation_name),
         ).fetchone()
@@ -301,10 +292,7 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
     if existing:
         conn.execute(
             """
-            UPDATE variacoes
-            SET produto_pai_id = ?,
-                nome_variacao = ?,
-                sku = COALESCE(NULLIF(?, ''), sku)
+            UPDATE variacoes SET produto_pai_id = ?, nome_variacao = ?, sku = COALESCE(NULLIF(?, ''), sku)
             WHERE id = ?
             """,
             (produto_pai_id, variation_name, sku, existing["id"]),
@@ -326,17 +314,13 @@ def _upsert_variation(conn, produto_pai_id: int, variation_id: str, variation_na
 def _get_current_cost(conn, variacao_id: int) -> float | None:
     row = conn.execute(
         """
-        SELECT custo_unitario
-        FROM custos_variacao
+        SELECT custo_unitario FROM custos_variacao
         WHERE variacao_id = ? AND ativo = 1
-        ORDER BY criado_em DESC, id DESC
-        LIMIT 1
+        ORDER BY criado_em DESC, id DESC LIMIT 1
         """,
         (variacao_id,),
     ).fetchone()
-    if not row:
-        return None
-    return float(row["custo_unitario"])
+    return float(row["custo_unitario"]) if row else None
 
 
 def find_importations_same_period(tipo_periodo: str, data_inicio: date, data_fim: date) -> list[dict]:
@@ -344,9 +328,7 @@ def find_importations_same_period(tipo_periodo: str, data_inicio: date, data_fim
         """
         SELECT * FROM importacoes
         WHERE tipo_relatorio = 'performance'
-          AND tipo_periodo = ?
-          AND data_inicio = ?
-          AND data_fim = ?
+          AND tipo_periodo = ? AND data_inicio = ? AND data_fim = ?
           AND status = 'confirmada'
         ORDER BY criado_em DESC
         """,
@@ -358,9 +340,7 @@ def find_importations_same_month(report_type: str, tipo_periodo: str, mes_refere
     return fetch_all(
         """
         SELECT * FROM importacoes
-        WHERE tipo_relatorio = ?
-          AND tipo_periodo = ?
-          AND mes_referencia = ?
+        WHERE tipo_relatorio = ? AND tipo_periodo = ? AND mes_referencia = ?
           AND status = 'confirmada'
         ORDER BY criado_em DESC
         """,
