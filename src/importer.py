@@ -27,6 +27,10 @@ class ShopeeImportError(Exception):
 class ShopeeImporter:
     """Leitor tolerante para relatórios de desempenho da Shopee.
 
+    A central de importações também recebe relatórios do Mercado Livre.
+    Quando o arquivo é identificado como ML, o leitor delega ao importador
+    específico do ML e devolve o mesmo formato interno esperado pela UI.
+
     Regra importante:
     - Produtos com variações: contabiliza somente linhas de variação, para não duplicar o pai.
     - Produtos sem variações: contabiliza a própria linha pai como "Sem variação".
@@ -38,8 +42,6 @@ class ShopeeImporter:
         "id_item_shopee": ("id do item", "id item", "id do produto", "item id", "product id"),
         "produto_nome": ("produto", "nome do produto", "product name"),
         "id_variacao_shopee": ("id da variacao", "id de variacao", "id variacao", "variation id"),
-        # Importante: não usar a regra genérica "variacao" aqui.
-        # Ela faz a coluna "ID da Variação" ser confundida com "Nome da Variação".
         "variacao_nome": (
             "nome da variacao",
             "nome variacao",
@@ -52,10 +54,54 @@ class ShopeeImporter:
         "unidades_pedido_pago": ("unidades (pedido pago)", "unidades pedido pago", "units paid", "quantidade", "unidades"),
     }
 
+    @staticmethod
+    def _looks_like_mercadolivre(path: Path) -> bool:
+        """Identifica ML pelo nome do arquivo e, como fallback, pelo cabeçalho."""
+        name = normalize_text(path.name)
+        if any(token in name for token in ("mercado livre", "mercadolivre", "mercado_livre", "ml_", "ml-")):
+            return True
+        try:
+            raw = pd.read_excel(path, sheet_name=0, header=None, nrows=20, engine="openpyxl")
+            text = " ".join(normalize_text(v) for v in raw.fillna("").astype(str).values.flatten())
+            ml_markers = ("anuncio", "unidades vendidas", "vendas brutas", "relatorio de desempenho")
+            return sum(marker in text for marker in ml_markers) >= 2
+        except Exception:
+            return False
+
     def preview(self, file_path: str | Path) -> list[ImportedLine]:
         path = Path(file_path)
         if not path.exists():
             raise ShopeeImportError(f"Arquivo não encontrado: {path}")
+
+        if self._looks_like_mercadolivre(path):
+            try:
+                from src.services.mercadolivre_import_service import preview_mercadolivre
+
+                preview = preview_mercadolivre(str(path))
+                imported = []
+                for row in preview["rows"]:
+                    imported.append(
+                        ImportedLine(
+                            id_item_shopee=str(row.get("ad_id") or ""),
+                            produto_nome=str(row.get("produto_nome") or ""),
+                            id_variacao_shopee=str(row.get("ad_id") or ""),
+                            variacao_nome=str(row.get("variacao_nome") or "Sem variação"),
+                            sku_variacao=str(row.get("sku") or ""),
+                            vendas_pedido_pago=float(row.get("faturamento") or 0),
+                            unidades_pedido_pago=int(row.get("unidades") or 0),
+                            tipo_linha="mercadolivre",
+                            contabilizar=True,
+                        )
+                    )
+                if not imported:
+                    raise ShopeeImportError("Nenhuma venda do Mercado Livre foi encontrada.")
+                return imported
+            except ValueError as exc:
+                raise ShopeeImportError(str(exc)) from exc
+            except Exception as exc:
+                if isinstance(exc, ShopeeImportError):
+                    raise
+                raise ShopeeImportError(f"Não consegui ler o relatório do Mercado Livre: {exc}") from exc
 
         sheet_name = self._find_sheet(path)
         df = self._read_sheet_with_detected_header(path, sheet_name)
