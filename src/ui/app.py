@@ -11,6 +11,7 @@ from src.ui.views.expenses_view import ExpensesView
 from src.ui.views.import_view import ImportView
 from src.ui.views.inputs_view import InputsView
 from src.ui.views.launcher_view import LauncherView
+from src.ui.views.mercadolivre_view import MercadoLivreView
 from src.ui.views.products_view import ProductsView
 from src.ui.views.settings_view import SettingsView
 from src.ui.views.shopee_fees_view import ShopeeFeesView
@@ -20,6 +21,7 @@ VIEWS = {
     "Dashboard": DashboardView,
     "Central de Automações": LauncherView,
     "Importações": ImportView,
+    "Mercado Livre": MercadoLivreView,
     "Produtos": ProductsView,
     "Custos": CostsView,
     "Insumos / Estoque": InputsView,
