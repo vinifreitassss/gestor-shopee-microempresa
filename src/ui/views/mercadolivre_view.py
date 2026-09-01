@@ -30,21 +30,15 @@ class MercadoLivreView(ctk.CTkFrame):
         self._build()
 
     def _build(self) -> None:
-        ctk.CTkLabel(
-            self,
-            text="Mercado Livre",
-            font=ctk.CTkFont(size=24, weight="bold"),
-        ).pack(anchor="w", padx=PAD, pady=PAD)
+        ctk.CTkLabel(self, text="Mercado Livre", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=PAD, pady=PAD)
         ctk.CTkLabel(
             self,
             text=(
-                "Importa o relatório de desempenho do Mercado Livre e soma as vendas ao mesmo DRE da Shopee. "
-                "A taxa usada é 22% de comissão + R$ 8,00 por unidade + 9% de imposto. "
-                "Os anúncios são cadastrados como produtos novos do Mercado Livre para vínculo posterior."
+                "Importa o relatório de vendas do Mercado Livre e soma as vendas ao mesmo DRE da Shopee. "
+                "Regra ML: 9% de imposto + 25% de comissão + R$ 7,00 por pedido. "
+                "Os anúncios vendidos são cadastrados como produtos novos do Mercado Livre, com custo pendente, para vínculo posterior."
             ),
-            text_color="gray",
-            wraplength=1000,
-            justify="left",
+            text_color="gray", wraplength=1000, justify="left",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
         box = ctk.CTkFrame(self)
@@ -58,26 +52,21 @@ class MercadoLivreView(ctk.CTkFrame):
         ctk.CTkButton(box, text="Pré-visualizar", command=self.preview).grid(row=1, column=3, padx=8, pady=8, sticky="w")
         ctk.CTkButton(box, text="Confirmar e plugar", command=self.confirm).grid(row=2, column=0, padx=8, pady=8, sticky="w")
         ctk.CTkLabel(box, textvariable=self.status_var, text_color="gray", wraplength=760, justify="left").grid(row=2, column=1, columnspan=3, padx=8, pady=8, sticky="w")
-        ctk.CTkLabel(
-            box,
-            textvariable=self.summary_var,
-            text_color="#f6c343",
-            wraplength=1000,
-            justify="left",
-        ).grid(row=3, column=0, columnspan=4, padx=8, pady=(0, 10), sticky="w")
+        ctk.CTkLabel(box, textvariable=self.summary_var, text_color="#f6c343", wraplength=1000, justify="left").grid(row=3, column=0, columnspan=4, padx=8, pady=(0, 10), sticky="w")
 
         metrics = ctk.CTkFrame(self)
         metrics.pack(fill="x", padx=PAD, pady=(0, PAD))
         for idx, (key, title) in enumerate([
             ("faturamento", "Faturamento ML"),
+            ("pedidos", "Pedidos"),
             ("unidades", "Unidades"),
             ("imposto", "Imposto 9%"),
-            ("comissao", "Comissão 22%"),
-            ("taxa_fixa", "Taxa fixa"),
+            ("comissao", "Comissão 25%"),
+            ("taxa_fixa", "Taxa R$7/pedido"),
             ("liquido_sem_custo", "Após taxas"),
         ]):
             card = MetricCard(metrics, title)
-            card.grid(row=0, column=idx, sticky="ew", padx=5, pady=5)
+            card.grid(row=0, column=idx, sticky="ew", padx=4, pady=5)
             metrics.grid_columnconfigure(idx, weight=1)
             self.cards[key] = card
 
@@ -86,33 +75,27 @@ class MercadoLivreView(ctk.CTkFrame):
             [
                 ("ad_id", "ID anúncio", 100),
                 ("produto_nome", "Produto ML", 300),
-                ("variacao_nome", "Variação", 160),
+                ("variacao_nome", "Variação", 150),
+                ("pedidos", "Pedidos", 75),
                 ("unidades", "Unid.", 70),
                 ("faturamento", "Bruto", 110),
                 ("imposto", "Imposto", 100),
                 ("comissao", "Comissão", 105),
-                ("taxa_fixa", "Taxa fixa", 100),
+                ("taxa_fixa", "Taxa fixa", 110),
                 ("custo", "Custo", 100),
                 ("lucro", "Lucro", 105),
                 ("margem", "Margem", 85),
-            ],
-            height=18,
+            ], height=18,
         )
         self.table.pack(fill="both", expand=True, padx=PAD, pady=PAD)
-
         ctk.CTkLabel(
             self,
-            text="Os produtos ML entram com custo pendente até você vinculá-los/cadastrar o custo. Isso evita assumir automaticamente que um anúncio do ML é o mesmo produto da Shopee.",
-            text_color="#f6c343",
-            wraplength=1000,
-            justify="left",
+            text="Custo pendente: o produto entra no DRE com faturamento e taxas, mas o lucro definitivo só é apurado quando houver custo cadastrado ou vínculo com um produto mestre.",
+            text_color="#f6c343", wraplength=1000, justify="left",
         ).pack(anchor="w", padx=PAD, pady=(0, PAD))
 
     def choose_file(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Escolha o relatório de desempenho do Mercado Livre",
-            filetypes=[("Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")],
-        )
+        path = filedialog.askopenfilename(title="Escolha o relatório de vendas do Mercado Livre", filetypes=[("Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")])
         if not path:
             return
         self.file_var.set(path)
@@ -141,36 +124,27 @@ class MercadoLivreView(ctk.CTkFrame):
     def _render_preview(self, preview: dict) -> None:
         self.preview_rows = preview["rows"]
         rows = []
-        total_tax = 0.0
-        total_commission = 0.0
-        total_fixed = 0.0
+        total_tax = total_commission = total_fixed = 0.0
         for item in self.preview_rows:
             gross = float(item["faturamento"])
+            orders = int(item["pedidos"])
             units = int(item["unidades"])
             tax = gross * ML_TAX_PERCENT / 100
             commission = gross * ML_COMMISSION_PERCENT / 100
-            fixed = units * ML_FIXED_FEE
+            fixed = orders * ML_FIXED_FEE
             after_fees = gross - tax - commission - fixed
-            total_tax += tax
-            total_commission += commission
-            total_fixed += fixed
+            total_tax += tax; total_commission += commission; total_fixed += fixed
             rows.append({
-                "ad_id": item["ad_id"],
-                "produto_nome": item["produto_nome"],
-                "variacao_nome": item["variacao_nome"],
-                "unidades": units,
-                "faturamento": brl(gross),
-                "imposto": brl(tax),
-                "comissao": brl(commission),
-                "taxa_fixa": brl(fixed),
-                "custo": "Pendente",
-                "lucro": brl(after_fees),
+                "ad_id": item["ad_id"], "produto_nome": item["produto_nome"], "variacao_nome": item["variacao_nome"],
+                "pedidos": orders, "unidades": units, "faturamento": brl(gross), "imposto": brl(tax),
+                "comissao": brl(commission), "taxa_fixa": brl(fixed), "custo": "Pendente", "lucro": brl(after_fees),
                 "margem": percent((after_fees / gross * 100) if gross else 0),
             })
         self.table.set_rows(rows)
         gross_total = float(preview["faturamento"])
         net = gross_total - total_tax - total_commission - total_fixed
         self.cards["faturamento"].set_value(brl(gross_total))
+        self.cards["pedidos"].set_value(str(preview["pedidos"]))
         self.cards["unidades"].set_value(str(preview["unidades"]))
         self.cards["imposto"].set_value(brl(total_tax))
         self.cards["comissao"].set_value(brl(total_commission))
@@ -178,11 +152,11 @@ class MercadoLivreView(ctk.CTkFrame):
         self.cards["liquido_sem_custo"].set_value(brl(net))
         self.summary_var.set(
             f"Esta planilha será plugada como Mercado Livre | {preview['data_inicio'].isoformat()} até {preview['data_fim'].isoformat()} | "
-            f"{preview['count']} anúncios com vendas | {preview['unidades']} unidades | faturamento {brl(gross_total)}."
+            f"{preview['count']} anúncios com vendas | {preview['pedidos']} pedidos | {preview['unidades']} unidades | faturamento {brl(gross_total)}."
         )
         self.status_var.set(
-            f"Regra ML: {ML_TAX_PERCENT:g}% imposto + {ML_COMMISSION_PERCENT:g}% comissão + R$ {ML_FIXED_FEE:.2f}/un. "
-            "O valor acima de 'Após taxas' ainda não desconta custo do produto."
+            f"Regra ML: {ML_TAX_PERCENT:g}% imposto + {ML_COMMISSION_PERCENT:g}% comissão + R$ {ML_FIXED_FEE:.2f}/pedido. "
+            "A taxa fixa usa pedidos; o CMV usa unidades."
         )
 
     def confirm(self) -> None:
@@ -199,24 +173,17 @@ class MercadoLivreView(ctk.CTkFrame):
         try:
             duplicates = find_ml_importations_same_period(start, end)
             if duplicates:
-                answer = messagebox.askyesno(
-                    "Período já importado",
-                    "Já existe uma planilha do Mercado Livre para este período.\n\n"
-                    "Substituir a importação anterior e manter apenas esta versão?",
-                )
+                answer = messagebox.askyesno("Período já importado", "Já existe uma planilha do Mercado Livre para este período.\n\nSubstituir a importação anterior e manter apenas esta versão?")
                 if not answer:
                     return
             result = save_mercadolivre_importation(path, start, end, replace_same_period=True)
         except Exception as exc:
             messagebox.showerror("Erro ao importar Mercado Livre", str(exc))
             return
-
         messagebox.showinfo(
             "Mercado Livre",
-            f"Importação concluída.\n\n"
-            f"{result['inserted']} anúncios/vendas incorporados ao DRE.\n"
-            f"Faturamento: {brl(result['faturamento'])}\n"
-            f"Custos pendentes: {result['incomplete']}\n\n"
-            "Os anúncios foram criados como produtos novos do Mercado Livre.",
+            f"Importação concluída.\n\n{result['inserted']} anúncios/vendas incorporados ao DRE.\n"
+            f"Pedidos: {result['pedidos']}\nUnidades: {result['unidades']}\nFaturamento: {brl(result['faturamento'])}\n"
+            f"Custos pendentes: {result['incomplete']}\n\nOs anúncios foram criados como produtos novos do Mercado Livre.",
         )
         self.status_var.set("Mercado Livre incorporado ao DRE e aos relatórios.")
